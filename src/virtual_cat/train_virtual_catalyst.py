@@ -3,7 +3,7 @@
 XGBOOST TRAINING FOR VIRTUAL CATALYST DATASETS
 With 5-fold cross-validation, SHAP analysis, and comprehensive evaluation
 ================================================================================
-Author: Moritz
+Author: Parastoo
 Date: 2026-02-02
 """
 
