@@ -3,7 +3,7 @@
 COMPARE RESULTS ACROSS 3 VIRTUAL CATALYST DATASETS
 High-quality individual plots for publication
 ================================================================================
-Author: Moritz
+Author: Parastoo
 Date: 2026-02-02
 """
 
