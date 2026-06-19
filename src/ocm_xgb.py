@@ -1,10 +1,12 @@
 import random
 import argparse
 from pathlib import Path
+from joblib import dump
 from time import time
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+import xgboost as xgb
 
 from utils import (
     BASE_PROCESS,
@@ -23,7 +25,7 @@ from utils import (
 )
 
 
-def train_random_forest(
+def train_xgboost(
     X_train,
     y_train,
     X_val,
@@ -33,12 +35,11 @@ def train_random_forest(
     feature_cols,
     random_state=random.Random(42),
     augment_data_flag=False,
-    model_type="default",
     model_kwargs={},
     cross_val_masks=None,
     cross_val_params=None,
 ):
-    # Combine train and validation sets for training
+    # Combine train and validation sets for XGBoost training
     if X_val is not None and y_val is not None:
         if cross_val_masks is not None:
             raise ValueError(
@@ -49,7 +50,7 @@ def train_random_forest(
         X_val = None
         y_val = None
 
-    # Data augmentation
+    # Data augmentation (permutations of M1, M2, M3 related features)
     if augment_data_flag:
         X_train, y_train, X_val, y_val, X_test, y_test, cross_val_masks = augment_data(
             X_train,
@@ -72,8 +73,7 @@ def train_random_forest(
     )
 
     model_seed = random_state.randint(0, 1000000)
-
-    # Cross-validation over provided parameter sets (if any)
+    # run cross-validation if masks are provided to select best hyperparameters
     if cross_val_masks is not None:
         if cross_val_params is None or len(cross_val_params) == 0:
             raise ValueError(
@@ -84,31 +84,29 @@ def train_random_forest(
         for params in cross_val_params:
             cv_mses = []
             for val_mask in cross_val_masks:
+                # get train/val split for this fold
                 train_mask = ~val_mask
                 X_tr = X_train[train_mask]
                 y_tr = y_train[train_mask]
                 X_val_cv = X_train[val_mask]
                 y_val_cv = y_train[val_mask]
                 # initialize and train model
-                model = RandomForestRegressor(random_state=model_seed, **params)
+                model = xgb.XGBRegressor(random_state=model_seed, **params)
                 model.fit(X_tr, y_tr)
+                # evaluate on validation fold
                 val_preds = model.predict(X_val_cv)
                 val_mse = float(np.mean((val_preds - y_val_cv) ** 2))
                 cv_mses.append(val_mse)
+            # check if this param set is the best so far
             avg_cv_mse = np.mean(cv_mses)
             if avg_cv_mse < best_cv_mse:
                 best_cv_mse = avg_cv_mse
                 best_params = params
         print(f"Best CV MSE: {best_cv_mse:.4f} with params: {best_params}")
-        model = RandomForestRegressor(random_state=model_seed, **best_params)
+        # init model with best hyperparameters found for training on full train set
+        model = xgb.XGBRegressor(random_state=model_seed, **best_params)
     else:
-        # fixed model selection
-        if model_type == "default":
-            model = RandomForestRegressor(n_estimators=100, random_state=model_seed)
-        elif model_type == "custom":
-            model = RandomForestRegressor(random_state=model_seed, **model_kwargs)
-        else:
-            raise ValueError(f"Invalid model type: {model_type}")
+        model = xgb.XGBRegressor(random_state=model_seed, **model_kwargs)
 
     # model fitting
     model.fit(X_train, y_train)
@@ -142,65 +140,132 @@ def train_random_forest(
     return results
 
 
+def plot_test_results(ax, y_true, y_pred, accumulate_permutations=False):
+    if accumulate_permutations:
+        # average predictions over permutations
+        y_pred = y_pred.reshape(-1, 6).mean(axis=1)
+        y_true = y_true[::6]
+    # compute R2, MAE, RMSE
+    r2 = 1.0 - np.sum((y_pred - y_true) ** 2) / np.sum((y_true - np.mean(y_true)) ** 2)
+    mae = np.mean(np.abs(y_pred - y_true))
+    mse = np.mean((y_pred - y_true) ** 2)
+    ax.scatter(y_true, y_pred, alpha=0.6)
+    max_val = 22.5  # max(max(y_true), max(y_pred))
+    min_val = -2.5  # min(min(y_true), min(y_pred))
+    ax.set_xlim(min_val, max_val)
+    ax.set_ylim(min_val, max_val)
+    ax.plot([min_val, max_val], [min_val, max_val], "r--")  # y=x line
+    # put metrics in the top-left inside the axes instead of using the title
+    ax.text(
+        0.02,
+        0.98,
+        f"R²={r2:.2f}, MAE={mae:.2f}",
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        bbox=dict(
+            boxstyle="round,pad=0.2", facecolor="white", alpha=0.7, edgecolor="none"
+        ),
+    )
+    # ax.set_title(f"R²={r2:.2f}, MAE={mae:.2f}")
+    ax.grid(True)
+    return r2, mae, mse, np.abs(y_pred - y_true)
+
+
 def main(
     data_path,
     seeds,
     n_train_catalysts,
-    n_val_catalysts,
     n_test_catalysts,
     split_strategy,
-    model_type="default",
-    cross_validation=False,
     n_folds=5,
     cross_val_params=None,
     conditions={},
     folder_name=None,
     feature_sets=["base+atom_numbers+support", "base+descriptors", "all"],
     augmentations=[True, False],
+    store_plots=False,
+    store_models=False,
 ):
+    # read data
     df = pd.read_csv(data_path)
-    if cross_validation:
-        folder_name = f"rf_cv_{cross_val_params}"
-    else:
-        folder_name = f"rf_{model_type}"
-    results_path = Path(f"./{folder_name}/{n_train_catalysts+n_val_catalysts}/")
+    # storage path for results
+    folder_name = f"xgb_cv_{cross_val_params}"
+    results_path = Path(f"./{folder_name}/{n_train_catalysts}/")
     results_path.mkdir(parents=True, exist_ok=True)
-    results_rows = []
-    collected_models = {}
-    collected_splits = {}
+    # collect results
+    results_rows = []  # list of dicts for each experiment
+    collected_models = {}  # dict of models
+    collected_splits = {}  # dict of data splits
     for cond_name, conds in conditions.items():
         if cond_name != "":
             print(f"Running experiments for condition: {cond_name}...")
-            _collected_models = {}
+            _collected_models = {}  # dict of models per condition
             collected_models[cond_name] = _collected_models
-            _collected_splits = {}
+            _collected_splits = {}  # dict of data splits per condition
             collected_splits[cond_name] = _collected_splits
         else:
             _collected_models = collected_models
             _collected_splits = collected_splits
+        # setup composite figure for all seeds
         num_seeds = len(seeds)
         print(f"Running experiments with {num_seeds} seeds...")
+        n_cols = len(feature_sets) * len(augmentations)
+        figsize = (3.0 * n_cols, 3.0 * num_seeds)
+        fig, axes = plt.subplots(
+            nrows=num_seeds,
+            ncols=n_cols,
+            figsize=figsize,
+            sharex=True,
+            sharey=True,
+        )
+        # ensure 2D array for consistent indexing
+        if num_seeds == 1 and n_cols == 1:
+            axes = np.array([[axes]])
+        if num_seeds == 1:
+            axes = axes.reshape(1, -1)
+        if n_cols == 1:
+            axes = axes.reshape(-1, 1)
+        # add column titles and axis labels
+        col_titles = [
+            "Atom Numbers+Aug",
+            "Atom Numbers",
+            "Descriptors+Aug",
+            "Descriptors",
+            "All+Aug",
+            "All",
+        ]
+        for ax, title in zip(axes[0], col_titles):
+            ax.set_title(title)
+        for ax in axes[:, 0]:
+            ax.set_ylabel("Predicted C2y")
+        for ax in axes[-1, :]:
+            ax.set_xlabel("True C2y")
         for i, seed in enumerate(seeds):
             print(f"Running experiments for seed {seed}...")
-            if cross_validation:
-                _cross_val_params = get_cross_validation_param_sets(
-                    cross_val_params, seed=seed
-                )
-            else:
-                _cross_val_params = None
+            # load cross validation parameter sets if needed
+            _cross_val_params = get_cross_validation_param_sets(
+                cross_val_params, seed=seed
+            )  # e.g., "best_cases", "avg_best", "random_30"
             for j, feature_set in enumerate(feature_sets):
+                # run experiments per feature set
                 if feature_set == "base+descriptors":
                     feature_cols = BASE_PROCESS + DESCRIPTORS
                 elif feature_set == "base+atom_numbers+support":
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
-                elif feature_set == "all":
+                elif feature_set == "all":  # all features
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
-                rng = random.Random(seed)
-                rf_rng = random.Random(rng.randint(0, 1000000))
 
+                # initialize random seed (for data splitting, we want the same splits each run)
+                rng = random.Random(seed)
+                # also use the same random state for training xgboost with/without augmentation
+                xgb_rng = random.Random(rng.randint(0, 1000000))
+
+                # Data splitting
                 (
                     X_train,
                     y_train,
@@ -218,31 +283,29 @@ def main(
                     split_strategy,
                     rng,
                     n_train_catalysts=n_train_catalysts,
-                    n_val_catalysts=n_val_catalysts,
+                    n_val_catalysts=0,  # we will not use a separate validation set since we do cross-validation on the training set
                     n_test_catalysts=n_test_catalysts,
                     return_indices=True,
                     conditions=conds,
                 )
-
-                if cross_validation:
-                    cross_val_masks = get_cross_validation_masks(
-                        df,
-                        train_indices,
-                        split_strategy,
-                        rng=rng,
-                        n_folds=n_folds,
-                        conditions=conds,
-                    )
-                else:
-                    cross_val_masks = None
+                # get cross-validation masks for training set if needed
+                cross_val_masks = get_cross_validation_masks(
+                    df,
+                    train_indices,
+                    split_strategy,
+                    rng=rng,
+                    n_folds=n_folds,
+                    conditions=conds,
+                )
 
                 for k, augm in enumerate(augmentations):
-                    print(f"Training RF model for feature set: {feature_set}...")
+                    # Train xgboost model
+                    print(f"Training XGBoost model for feature set: {feature_set}...")
                     print(
                         f"Training {'with' if augm else 'without'} data augmentation..."
                     )
                     start_time = time()
-                    rf_results = train_random_forest(
+                    xgb_results = train_xgboost(
                         X_train,
                         y_train,
                         X_val,
@@ -250,43 +313,37 @@ def main(
                         X_test,
                         y_test,
                         feature_cols,
-                        random_state=rf_rng,
+                        random_state=xgb_rng,
                         augment_data_flag=augm,
-                        model_type=model_type,
                         cross_val_masks=cross_val_masks,
                         cross_val_params=_cross_val_params,
                     )
                     elapsed_time = time() - start_time
                     print(f"Training completed in {elapsed_time:.2f} seconds.")
-                    # compute metrics without plotting
-                    y_true = rf_results["y_test"]
-                    y_pred = rf_results["preds_test"]
-                    if augm:
-                        # average predictions over permutations
-                        y_pred = y_pred.reshape(-1, 6).mean(axis=1)
-                        y_true = y_true[::6]
-                    ss_res = np.sum((y_pred - y_true) ** 2)
-                    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-                    r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-                    mae = float(np.mean(np.abs(y_pred - y_true)))
-                    mse = float(np.mean((y_pred - y_true) ** 2))
-                    absolute_errors = np.abs(y_pred - y_true)
+                    r2, mae, mse, absolute_errors = plot_test_results(
+                        ax=axes[i, j * len(augmentations) + k],
+                        y_true=xgb_results["y_test"],
+                        y_pred=xgb_results["preds_test"],
+                        accumulate_permutations=augm,
+                    )
+                    # compute MAE per catalyst and store in results
                     test_df = df.iloc[test_indices].reset_index(drop=True)
                     test_df["absolute_error"] = absolute_errors
                     mae_by_catalyst = test_df.groupby("Name")["absolute_error"].mean()
                     results_rows.append(
                         {
-                            "model_type": "rf",
+                            "model_type": "xgboost",
                             "feature_set": feature_set,
                             "augmentation": "yes" if augm else "no",
                             "n_train_catalysts": n_train_catalysts,
-                            "n_val_catalysts": n_val_catalysts,
+                            "n_val_catalysts": 0,
                             "n_test_catalysts": n_test_catalysts,
                             "seed": seed,
                             "r2": r2,
                             "mae": mae,
                             "mse": mse,
                             "condition": cond_name,
+                            # merged per-catalyst entries
                             **{
                                 f"test_catalyst_{i}": name
                                 for i, name in enumerate(mae_by_catalyst.index)
@@ -298,36 +355,49 @@ def main(
                             "training_time": elapsed_time,
                         }
                     )
+                    # collect model and splits
                     model_id = (
                         f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
                     )
-                    _collected_models[model_id] = rf_results["model"]
+                    _collected_models[model_id] = xgb_results["model"]
                     if seed not in _collected_splits:
                         _collected_splits[seed] = {
                             "train_indices": train_indices,
                             "val_indices": val_indices,
                             "test_indices": test_indices,
                         }
+
+        # save figure
+        if store_plots:
+            fig.savefig(
+                results_path / f"xgb_test_results_{seeds[0]}-{seeds[-1]}_{cond_name}.png"
+            )
+    # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
     summary_path = results_path / "results_summary.csv"
     if summary_path.exists():
         results_df.to_csv(summary_path, mode="a", header=False, index=False)
     else:
         results_df.to_csv(summary_path, index=False)
-    # models_path = results_path / f"rf_models_{seeds[0]}-{seeds[-1]}.joblib"
-    # dump(collected_models, models_path)
-    # splits_path = results_path / f"data_splits_{seeds[0]}-{seeds[-1]}.joblib"
-    # dump(collected_splits, splits_path)
+    # save models to disk
+    models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
+    if store_models:
+        dump(collected_models, models_path)
+    # save data splits to disk
+    splits_path = results_path / f"data_splits_{seeds[0]}-{seeds[-1]}.joblib"
+    dump(collected_splits, splits_path)
     print("All experiments completed.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run training/evaluation for RF")
+    parser = argparse.ArgumentParser(description="Run training/evaluation")
+    # add argument for datapath
     parser.add_argument(
         "--data_path",
         type=str,
         help="Path to the input data file",
     )
+    # add argument for seeds: accepts space separated ints or range syntax like 1:100 or 1:10:2
     parser.add_argument(
         "--seeds",
         type=str,
@@ -335,17 +405,12 @@ if __name__ == "__main__":
         default=["1"],
         help="Seeds for running the experiments. Accepts ints (e.g. --seeds 1 2 3) or ranges (e.g. --seeds 1:100 or 1:10:2)",
     )
+    # add arguments for n_train_catalysts, n_test_catalysts
     parser.add_argument(
         "--n_train_catalysts",
         type=int,
-        default=39,
-        help="Number of training catalysts (default: 39)",
-    )
-    parser.add_argument(
-        "--n_val_catalysts",
-        type=int,
-        default=10,
-        help="Number of validation catalysts (default: 10)",
+        default=49,
+        help="Number of training catalysts (default: 49)",
     )
     parser.add_argument(
         "--n_test_catalysts",
@@ -357,18 +422,7 @@ if __name__ == "__main__":
         "--split_strategy",
         type=str,
         default="catalyst",
-        help="Data split strategy: 'random', 'catalyst', or 'catalyst_random' (default: 'catalyst')",
-    )
-    parser.add_argument(
-        "--model_type",
-        type=str,
-        default="default",
-        help="Model type: 'default', 'custom' (default: 'default')",
-    )
-    parser.add_argument(
-        "--cross_validation",
-        action="store_true",
-        help="Whether to use cross-validation for hyperparameter tuning",
+        help="Data split strategy: 'catalyst', or 'catalyst_random' (default: 'catalyst')",
     )
     parser.add_argument(
         "--n_folds",
@@ -379,8 +433,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cross_val_params",
         type=str,
-        default="rf_50",
-        help="Parameter set for cross-validation",
+        default="random_50",
+        help="Parameter set for cross-validation: 'random_x' where x is the number of random samples from all combinations (default: 'random_30')",
     )
     parser.add_argument(
         "--conditions",
@@ -401,6 +455,16 @@ if __name__ == "__main__":
         nargs="+",
         default=["yes", "no"],
         help="Augmentation options to run (default: both yes and no)",
+    )
+    parser.add_argument(
+        "--store_plots",
+        action="store_true",
+        help="Whether to store the plots (default: False)",
+    )
+    parser.add_argument(
+        "--store_models",
+        action="store_true",
+        help="Whether to store the models (default: False)",
     )
 
     def parse_seeds(tokens):
@@ -424,14 +488,16 @@ if __name__ == "__main__":
                 out.extend(list(rng))
             else:
                 out.append(int(t))
+        # remove duplicates while preserving order
         return list(dict.fromkeys(out))
 
     args = parser.parse_args()
     seeds = parse_seeds(args.seeds)
     if args.split_strategy != "catalyst" and args.conditions != "None":
         raise ValueError("Conditions can only be used with 'catalyst' split strategy.")
+    # set conditions based on argument
     if args.conditions == "None":
-        conditions = {"": {}}
+        conditions = {"": {}}  # no conditions
     elif args.conditions == "temp_single":
         conditions = CONDITIONS_TEMP_SINGLE
     elif args.conditions == "temp_pairs":
@@ -446,14 +512,13 @@ if __name__ == "__main__":
         data_path=args.data_path,
         seeds=seeds,
         n_train_catalysts=args.n_train_catalysts,
-        n_val_catalysts=args.n_val_catalysts,
         n_test_catalysts=args.n_test_catalysts,
         split_strategy=args.split_strategy,
-        model_type=args.model_type,
-        cross_validation=args.cross_validation,
         n_folds=args.n_folds,
         cross_val_params=args.cross_val_params,
         conditions=conditions,
         feature_sets=args.feature_sets,
         augmentations=augmentations,
+        store_plots=args.store_plots,
+        store_models=args.store_models,
     )

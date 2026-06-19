@@ -14,6 +14,7 @@ from utils import (
     settings_to_filename_map,
     augment_data,
     scale_data,
+    get_results_csv,
 )
 
 
@@ -255,7 +256,17 @@ if __name__ == "__main__":
     train_data_file = Path(args.train_data_file)
     n_train_catalysts = args.n_train_catalysts
 
-    results_df = pd.read_csv(experiment_path / "gathered_results.csv")
+    #load data
+    if not (experiment_path / "gathered_results.csv").exists():
+        # go through all folders and load file "results_summary.csv" and concatenate them into a single dataframe
+        all_results = get_results_csv(experiment_path)
+        print(f"Found {len(all_results)} result files.")
+        # concatenate all results
+        results_df = pd.concat(all_results, ignore_index=True)
+        # save gathered results
+        results_df.to_csv(experiment_path / "gathered_results.csv", index=False)
+    else:
+        results_df = pd.read_csv(experiment_path / "gathered_results.csv")
     train_df = pd.read_csv(train_data_file)
     results_df = results_df[results_df["n_train_catalysts"] == n_train_catalysts]
     results_df = compute_shap_values(
