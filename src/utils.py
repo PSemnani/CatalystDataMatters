@@ -5,7 +5,6 @@ import operator
 from pathlib import Path
 from itertools import permutations, product
 import numpy as np
-import xgboost as xgb
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
@@ -43,14 +42,6 @@ DESCRIPTORS = [
     "M3_oxidation_state",
     "support_surface_area",
 ]
-SYNTH_DESCRIPTORS = {
-    "non_unique": [f"D{i+1}_nu" for i in range(16)],
-    "unique": [f"D{i+1}_u" for i in range(16)],
-    "threshold": [f"D{i+1}_thresh" for i in range(16)],
-    "top_6": [f"D{i+1}_{j+1}" for i in range(16) for j in range(6)],
-    "weighted_mean": [f"D{i+1}_w_mean" for i in range(16)],
-    "mean": [f"D{i+1}_mean" for i in range(16)],
-}
 
 CONDITIONS_TEMP_SINGLE = {
     "700": {"Temp": {"==": 700}},
@@ -71,84 +62,6 @@ CONDITIONS_CH4_O2_RATIO = {
     "4": {"CH4/O2": {"==": 4}},
     "6": {"CH4/O2": {"==": 6}},
 }
-
-XGB_PARAM_SET_COLUMNS = [
-    "n_estimators",
-    "learning_rate",
-    "max_depth",
-    "subsample",
-    "colsample_bytree",
-    "reg_alpha",
-    "reg_lambda",
-    "gamma",
-    "min_child_weight",
-]
-
-XGB_PARAM_SET_BEST_CASES = [
-    [100, 0.3, 4, 1.0, 0.6, 0.5, 1.0, 0.0, 2],
-    [350, 0.08, 10, 0.7, 0.6, 0.0, 1.0, 1.0, 3],
-    [350, 0.3, 10, 1.0, 0.6, 0.5, 1.0, 10.0, 1],
-    [350, 0.1, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 2],
-    [700, 0.3, 10, 0.9, 0.6, 0.0, 2.0, 10.0, 3],
-    [350, 0.3, 6, 0.9, 0.6, 0.0, 0.5, 1.0, 1],
-    [350, 0.1, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 1],
-    [700, 0.3, 10, 1.0, 0.6, 0.0, 0.5, 10.0, 3],
-    [100, 0.3, 10, 0.7, 0.8, 0.5, 1.0, 10.0, 3],
-    [350, 0.3, 10, 1.0, 0.8, 0.0, 0.5, 10.0, 1],
-    [100, 0.1, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 1],
-    [100, 0.3, 6, 1.0, 0.6, 0.0, 2.0, 10.0, 2],
-    [100, 0.02, 10, 0.7, 0.6, 0.0, 2.0, 0.0, 3],
-    [350, 0.1, 10, 0.9, 0.6, 0.0, 2.0, 10.0, 2],
-    [700, 0.3, 10, 1.0, 0.6, 0.0, 1.0, 1.0, 2],
-    [350, 0.3, 10, 0.9, 0.6, 0.0, 2.0, 10.0, 2],
-    [700, 0.1, 6, 1.0, 0.6, 0.5, 2.0, 10.0, 1],
-    [100, 0.05, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 3],
-    [100, 0.02, 10, 0.7, 1.0, 0.0, 2.0, 10.0, 2],
-    [100, 0.05, 6, 0.9, 0.8, 0.0, 2.0, 1.0, 1],
-    [100, 0.3, 10, 0.9, 0.6, 0.0, 2.0, 1.0, 3],
-    [100, 0.3, 10, 0.9, 0.6, 0.5, 1.0, 10.0, 3],
-    [700, 0.3, 10, 0.9, 0.6, 0.0, 0.5, 10.0, 1],
-    [700, 0.3, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 1],
-    [350, 0.1, 10, 1.0, 0.6, 0.5, 1.0, 10.0, 1],
-    [700, 0.08, 10, 0.7, 0.6, 0.5, 0.5, 10.0, 2],
-    [700, 0.3, 10, 0.9, 0.6, 0.5, 0.5, 10.0, 3],
-    [350, 0.3, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 2],
-    [700, 0.3, 10, 0.7, 0.8, 0.5, 0.5, 10.0, 1],
-    [700, 0.3, 10, 1.0, 0.8, 0.5, 1.0, 10.0, 3],
-]
-
-XGB_PARAM_SET_AVG_BEST = [
-    [100, 0.05, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 1],
-    [100, 0.05, 10, 0.9, 0.6, 0.5, 2.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 1],
-    [100, 0.05, 10, 0.7, 0.6, 0.5, 0.5, 10.0, 2],
-    [100, 0.05, 10, 1.0, 0.6, 0.5, 2.0, 10.0, 1],
-    [700, 0.02, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 2],
-    [100, 0.05, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 3],
-    [700, 0.02, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 1],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 3],
-    [700, 0.02, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 0.5, 10.0, 3],
-    [100, 0.05, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 1],
-    [100, 0.05, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 1],
-    [350, 0.02, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 1],
-    [700, 0.05, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 2],
-    [700, 0.02, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 2],
-    [100, 0.05, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 2],
-    [100, 0.05, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 2],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 2.0, 10.0, 2],
-    [100, 0.1, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 1],
-    [700, 0.02, 10, 0.7, 0.6, 0.5, 0.5, 10.0, 1],
-    [350, 0.02, 10, 0.9, 0.6, 0.5, 1.0, 10.0, 2],
-    [350, 0.02, 10, 0.7, 0.6, 0.0, 1.0, 10.0, 3],
-    [100, 0.05, 10, 0.9, 0.6, 0.0, 2.0, 10.0, 1],
-    [350, 0.05, 10, 0.7, 0.6, 0.0, 2.0, 10.0, 3],
-    [350, 0.02, 10, 0.7, 0.6, 0.5, 1.0, 10.0, 1],
-]
 
 xgb_grid_params = {
     "n_estimators": [100, 350, 700],
@@ -204,17 +117,14 @@ settings_to_filename_map = {
 
 
 def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
-    if param_set_name == "best_cases":
-        param_values = XGB_PARAM_SET_BEST_CASES
-    elif param_set_name == "avg_best":
-        param_values = XGB_PARAM_SET_AVG_BEST
-    elif param_set_name.startswith("random_"):
+    if param_set_name.startswith("random_"):
         num_samples = int(param_set_name.split("_")[1])
         rng = random.Random(seed)
         param_values = [
-            [rng.choice(xgb_grid_params[key]) for key in XGB_PARAM_SET_COLUMNS]
+            [rng.choice(xgb_grid_params[key]) for key in xgb_grid_params.keys()]
             for _ in range(num_samples)
        ]
+        return [dict(zip(xgb_grid_params.keys(), vals)) for vals in param_values]
     elif param_set_name.startswith("rf_"):
         num_samples = int(param_set_name.split("_")[1])
         # compute all possible combinations of the params available in rf_grid_params
@@ -234,59 +144,21 @@ def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
         raise ValueError(
             f"Invalid cross-validation parameter set name: {param_set_name}"
         )
-    param_dicts = [dict(zip(XGB_PARAM_SET_COLUMNS, vals)) for vals in param_values]
-    return param_dicts
 
 
-def default_xgb(seed: int) -> xgb.XGBRegressor:
-    return xgb.XGBRegressor(
-        objective="reg:squarederror",
-        eval_metric="mae",
-        tree_method="hist",
-        random_state=seed,
-        n_estimators=700,
-        learning_rate=0.08,  # 0 to 1
-        max_depth=6,
-        subsample=0.9,  # 0 to 1 (how much data to sample per tree)
-        colsample_bytree=0.8,  # 0 to 1 (how many features to sample per tree)
-        reg_alpha=0.0,  # 0 to inf
-        reg_lambda=1.0,  # 0 to inf
-        gamma=0.0,  # 0 to inf
-        min_child_weight=1.0,
-    )
-
-
-def old_script_xgb(seed: int) -> xgb.XGBRegressor:
-    return xgb.XGBRegressor(
-        objective="reg:squarederror",
-        eval_metric="mae",
-        tree_method="hist",
-        random_state=seed,
-        learning_rate=0.05,  # 0 to 1
-        max_depth=6,
-        subsample=0.8,  # 0 to 1 (how much data to sample per tree)
-        colsample_bytree=0.8,  # 0 to 1 (how many features to sample per tree)
-        reg_alpha=0.0,  # 0 to inf
-        reg_lambda=1.0,  # 0 to inf
-        min_child_weight=1.0,
-    )
-
-
-def optimized_xgb(seed: int) -> xgb.XGBRegressor:
-    return xgb.XGBRegressor(
-        objective="reg:squarederror",
-        eval_metric="mae",
-        tree_method="hist",
-        random_state=seed,
-        learning_rate=0.05,  # 0 to 1
-        max_depth=10,
-        subsample=0.8,  # 0 to 1 (how much data to sample per tree)
-        colsample_bytree=0.6,  # 0 to 1 (how many features to sample per tree)
-        reg_alpha=0.0,  # 0 to inf
-        reg_lambda=1.0,  # 0 to inf
-        gamma=10.0,  # 0 to inf
-        min_child_weight=1.0,
-    )
+def get_results_csv(experiment_path: Path) -> pd.DataFrame:
+    if experiment_path.exists() and experiment_path.is_dir():
+        result_file = experiment_path / "results_summary.csv"
+        if result_file.exists():
+            df_res = pd.read_csv(result_file)
+            return [df_res]
+        else:
+            results = []
+            for folder in experiment_path.iterdir():
+                results.extend(get_results_csv(folder))
+            return results
+    else:
+        return []
 
 
 def acquire_lock(lock_path: Path, timeout: float = 30.0, poll: float = 0.1):

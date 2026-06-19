@@ -11,7 +11,6 @@ from pathlib import Path
 import torch.nn as nn
 import torch.optim as optim
 
-from ocm_xgb_cluster import train_xgboost
 from utils import (
     BASE_PROCESS,
     ATOM_NUMBERS,
@@ -84,73 +83,6 @@ class SimpleMLP(nn.Module):
         return self.model(x)
 
 
-# MLP that embeds three atom types into f-dimensional vectors,
-# averages them to get a permutation-invariant catalyst representation,
-# concatenates that to the remaining (continuous) features and predicts.
-class EmbeddedAtomMLP(nn.Module):
-    def __init__(
-        self,
-        input_dim,
-        atom_vocab_size,
-        atom_indices,
-        atom_embed_dim=16,
-        hidden_dims=(128, 64),
-        dropout=0.1,
-    ):
-        """
-        input_dim: total number of input columns (including the 3 atom-number columns)
-        atom_vocab_size: number of distinct atom indices (>= max atom id + 1)
-        atom_embed_dim: dimensionality f of each atom embedding
-        atom_indices: tuple/list of three column indices in the input that contain integer atom IDs
-        """
-        super().__init__()
-
-        if len(atom_indices) != 3:
-            raise ValueError("atom_indices must contain exactly three indices.")
-
-        self.atom_indices = tuple(atom_indices)
-        self.atom_embed = nn.Embedding(atom_vocab_size, atom_embed_dim)
-
-        # build the downstream MLP (same pattern as SimpleMLP)
-        layers = []
-        prev = (
-            input_dim - 3 + atom_embed_dim
-        )  # exclude 3 atom index columns, add embed dim
-        for h in hidden_dims:
-            layers.append(nn.Linear(prev, h))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(dropout))
-            prev = h
-        layers.append(nn.Linear(prev, 1))
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        """
-        x: tensor shape (batch, input_dim). The columns at self.atom_indices are expected
-           to contain atom IDs (integers). If they are float, they will be cast to long.
-        """
-        # extract atom ids and ensure they are valid longs
-        atom_ids = torch.stack([x[:, idx] for idx in self.atom_indices], dim=1)
-        atom_ids = atom_ids.long()
-        # clamp to valid range [0, vocab_size-1] to avoid OOB embedding access
-        atom_ids = torch.clamp(atom_ids, min=0, max=self.atom_embed.num_embeddings - 1)
-
-        # embed each of the three atoms: (batch, 3, embed_dim)
-        emb = self.atom_embed(atom_ids)
-        # mean-pool across the three atoms -> (batch, embed_dim)
-        emb_mean = emb.mean(dim=1)
-
-        # build continuous feature vector by excluding atom index columns
-        batch_size, total_dim = x.shape
-        mask = [i for i in range(total_dim) if i not in self.atom_indices]
-        cont = x[:, mask]
-
-        # concatenate continuous features with pooled embedding
-        combined = torch.cat([cont, emb_mean], dim=1)
-
-        return self.model(combined)
-
-
 def train_nn(
     X_train,
     y_train,
@@ -159,7 +91,6 @@ def train_nn(
     X_test,
     y_test,
     feature_cols,
-    model_type="simple",  # "simple" or "embed"
     epochs=20000,
     batch_size=1024,
     lr=1e-3,
@@ -172,13 +103,10 @@ def train_nn(
     factor=0.8,
     ema_decay=0.999,
     ema_warmup=1,
-    atom_embed_dim=16,
-    atom_vocab_size=256,
     early_stopping=2000,
     augment_data_flag=False,
 ):
     assert ema_warmup >= 1, "ema_warmup must be at least 1"
-    assert model_type in ("simple", "embed"), "invalid model_type"
 
     # Data augmentation (permutations of M1, M2, M3 related features)
     if augment_data_flag:
@@ -192,20 +120,13 @@ def train_nn(
             feature_cols,
         )
 
-    if model_type == "embed":
-        assert all(
-            name in feature_cols for name in ATOM_NUMBERS
-        ), f"ATOM_NUMBERS {ATOM_NUMBERS} must be in feature_cols for embed"
-        passthrough_cols = ATOM_NUMBERS
-    else:
-        passthrough_cols = []
     # Scaling
     X_train, X_val, X_test, scaler = scale_data(
         X_train,
         X_val,
         X_test,
         feature_cols,
-        passthrough_cols=passthrough_cols,
+        passthrough_cols=[],
     )
 
     # Datasets & loaders
@@ -220,21 +141,10 @@ def train_nn(
     # device
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Model selection
-    if model_type == "embed":
-        atom_number_cols = tuple(feature_cols.index(name) for name in ATOM_NUMBERS)
-        model = EmbeddedAtomMLP(
-            input_dim=X_train.shape[1],
-            atom_vocab_size=atom_vocab_size,
-            atom_embed_dim=atom_embed_dim,
-            atom_indices=atom_number_cols,
-            hidden_dims=hidden_dims,
-            dropout=dropout,
-        ).to(device)
-    else:
-        model = SimpleMLP(
-            input_dim=X_train.shape[1], hidden_dims=hidden_dims, dropout=dropout
-        ).to(device)
+    # Model initialization
+    model = SimpleMLP(
+        input_dim=X_train.shape[1], hidden_dims=hidden_dims, dropout=dropout
+    ).to(device)
 
     # Loss, optimizer, scheduler
     criterion = nn.MSELoss()
@@ -467,8 +377,6 @@ def main(
 
         # initialize random seed (for data splitting, we want the same splits each run)
         rng = random.Random(seed)
-        # also use the same random state for training xgboost with/without augmentation
-        xgb_rng = random.Random(rng.randint(0, 1000000))
 
         # Data splitting
         X_train, y_train, X_val, y_val, X_test, y_test = split_data(
@@ -484,44 +392,6 @@ def main(
         )
 
         for augm in augmentations:
-            # Train xgboost model
-            # print(f"Training XGBoost model for feature set: {feature_set}...")
-            # print(f"Training {'with' if augm else 'without'} data augmentation...")
-            # xgb_results = train_xgboost(
-            #     X_train,
-            #     y_train,
-            #     X_val,
-            #     y_val,
-            #     X_test,
-            #     y_test,
-            #     feature_cols,
-            #     random_state=xgb_rng,
-            #     augment_data_flag=augm,
-            # )
-            # fig, r2, mae, mse = plot_test_results(
-            #     xgb_results["y_test"],
-            #     xgb_results["preds_test"],
-            #     accumulate_permutations=augm,
-            # )
-            # fig.savefig(
-            #     results_path
-            #     / f"xgb_{'augmentation_' if augm else ''}test_results_{file_identifier}.png"
-            # )
-            # results_rows.append(
-            #     {
-            #         "model_type": "xgboost",
-            #         "feature_set": feature_set,
-            #         "augmentation": "yes" if augm else "no",
-            #         "n_train_catalysts": n_train_catalysts,
-            #         "n_val_catalysts": n_val_catalysts,
-            #         "n_test_catalysts": n_test_catalysts,
-            #         "seed": seed,
-            #         "r2": r2,
-            #         "mae": mae,
-            #         "mse": mse,
-            #     }
-            # )
-
             # Train neural network
             print(f"Training Neural Network model for feature set: {feature_set}...")
             print(f"Training {'with' if augm else 'without'} data augmentation...")
@@ -545,25 +415,15 @@ def main(
                     X_test,
                     y_test,
                     feature_cols,
-                    model_type="simple",
                     device="cuda",
                     augment_data_flag=augm,
                     **nn_args,
                 )
-                # fig = plot_training_history(nn_results["history"])
-                # fig.savefig(
-                #     results_path
-                #     / f"nn_{'augmentation_' if augm else ''}training_history_{file_identifier}.png"
-                # )
-                fig, r2, mae, mse = plot_test_results(
+                _, r2, mae, mse = plot_test_results(
                     nn_results["y_test"],
                     nn_results["preds_test"],
                     accumulate_permutations=augm,
                 )
-                # fig.savefig(
-                #     results_path
-                #     / f"nn_{'augmentation_' if augm else ''}test_results_{file_identifier}.png"
-                # )
                 elapsed_time = time() - start_time
                 print(f"NN training run {n+1} completed in {elapsed_time:.2f} seconds.")
                 timings.append(elapsed_time)
@@ -599,17 +459,6 @@ def main(
                     **{f"r2_{i}": test_r2s[i] for i in range(len(choices))},
                     **{f"timing_{i}": timings[i] for i in range(len(choices))},
                 })
-            # store the model weights and training args
-            # torch.save(
-            #     nn_results["model"].state_dict(),
-            #     results_path
-            #     / f"nn_{'augmentation_' if augm else ''}model_weights_{file_identifier}.pt",
-            # )
-            # torch.save(
-            #     nn_args,
-            #     results_path
-            #     / f"nn_{'augmentation_' if augm else ''}training_args_{file_identifier}.pt",
-            # )
 
     # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
@@ -671,7 +520,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_params",
         type=str,
-        default="default",
+        default="random_25",
         help="Parameter set for hyper-parameter search (default for fixed set with no search or nn_xx for xx random combinations)",
     )
     args = parser.parse_args()
