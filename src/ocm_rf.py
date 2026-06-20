@@ -309,6 +309,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_path",
         type=str,
+        required=True,
         help="Path to the input data file",
     )
     parser.add_argument(
