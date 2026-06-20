@@ -395,6 +395,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_path",
         type=str,
+        required=True,
         help="Path to the input data file",
     )
     # add argument for seeds: accepts space separated ints or range syntax like 1:100 or 1:10:2
