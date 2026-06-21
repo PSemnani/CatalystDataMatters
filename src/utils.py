@@ -85,18 +85,31 @@ rf_grid_params = {
 }
 
 nn_grid_params = {
-    "epochs": [20000,],          # maximum number of epochs to train
-    "batch_size": [512, 1024], 
+    "epochs": [
+        20000,
+    ],  # maximum number of epochs to train
+    "batch_size": [512, 1024],
     "hidden_dims": [(128,), (256,), (256, 128), (256, 128, 64)],
-    "lr": [1e-3, 5e-3, 1e-4],   # initial learning rate (lr)
-    "min_lr": [1e-5,],           # minimum lr at which training is stopped
-    "weight_decay": [1e-5,],     # weight decay for AdamW optimizer
-    "patience": [1, 25, 50],    # reduce on plateau scheduler patience
-    "factor": [0.5, 0.9],       # reduce on plateau lr reduction factor
-    "dropout": [0, 0.2, 0.5],   # dropout rate for hidden layers
-    "ema_decay": [0.99,],        # decay for exponential moving average of model weights
-    "ema_warmup": [1, 5],       # number of epochs to wait before starting to apply EMA updates (allows model to warm up first)
-    "early_stopping": [1500,],   # number of epochs with no improvement after which training will be stopped
+    "lr": [1e-3, 5e-3, 1e-4],  # initial learning rate (lr)
+    "min_lr": [
+        1e-5,
+    ],  # minimum lr at which training is stopped
+    "weight_decay": [
+        1e-5,
+    ],  # weight decay for AdamW optimizer
+    "patience": [1, 25, 50],  # reduce on plateau scheduler patience
+    "factor": [0.5, 0.9],  # reduce on plateau lr reduction factor
+    "dropout": [0, 0.2, 0.5],  # dropout rate for hidden layers
+    "ema_decay": [
+        0.99,
+    ],  # decay for exponential moving average of model weights
+    "ema_warmup": [
+        1,
+        5,
+    ],  # number of epochs to wait before starting to apply EMA updates (allows model to warm up first)
+    "early_stopping": [
+        1500,
+    ],  # number of epochs with no improvement after which training will be stopped
 }
 
 settings_to_filename_map = {
@@ -123,14 +136,16 @@ def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
         param_values = [
             [rng.choice(xgb_grid_params[key]) for key in xgb_grid_params.keys()]
             for _ in range(num_samples)
-       ]
+        ]
         return [dict(zip(xgb_grid_params.keys(), vals)) for vals in param_values]
     elif param_set_name.startswith("rf_"):
         num_samples = int(param_set_name.split("_")[1])
         # compute all possible combinations of the params available in rf_grid_params
         _all_param_values = list(product(*rf_grid_params.values()))
         rng = np.random.default_rng(seed)
-        param_values = rng.choice(_all_param_values, size=num_samples, replace=False).tolist()
+        param_values = rng.choice(
+            _all_param_values, size=num_samples, replace=False
+        ).tolist()
         return [dict(zip(rf_grid_params.keys(), vals)) for vals in param_values]
     elif param_set_name.startswith("nn_"):
         num_samples = int(param_set_name.split("_")[1])
@@ -138,7 +153,7 @@ def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
         param_values = [
             [rng.choice(nn_grid_params[key]) for key in nn_grid_params.keys()]
             for _ in range(num_samples)
-       ]
+        ]
         return [dict(zip(nn_grid_params.keys(), vals)) for vals in param_values]
     else:
         raise ValueError(
@@ -350,14 +365,13 @@ def split_data(
         ), "Not enough catalysts for the requested split sizes."
 
         # sample test catalysts and train catalysts (train includes val for now)
-        test_catalysts = rng.sample(list(all_catalysts), n_test_catalysts)
-        remaining_catalysts = [c for c in all_catalysts if c not in test_catalysts]
-        train_catalysts = rng.sample(
-            remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
-        )
         if len(conditions) == 0:
-            # no conditions provided, use empty conditions and split according to
-            # catalyst names only
+            # no conditions provided, split according to catalyst names only
+            test_catalysts = rng.sample(list(all_catalysts), n_test_catalysts)
+            remaining_catalysts = [c for c in all_catalysts if c not in test_catalysts]
+            train_catalysts = rng.sample(
+                remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
+            )
             train_indices, test_indices = generate_splits(
                 df,
                 train_catalysts,
@@ -366,19 +380,33 @@ def split_data(
                 catalyst_name_column=catalyst_name_column,
             )
         else:
-            # use all catalysts not in the test set for training but filter based on
-            # conditions
-            # the test set will only consist of filtered data points from catalysts in
-            # the train set that fulfill the conditions (i.e. the catalysts in
-            # test_catalysts will be ignored)
-            train_indices, test_indices = generate_splits(
+            # use all catalysts for training but remove all data points at the target
+            # condition except for n_training_catalysts+n_val_catalysts catalysts
+            # the test set will only consist of filtered data points from
+            # n_test_catalysts catalysts in the train set at the target condition
+            all_shuffled = rng.sample(list(all_catalysts), len(all_catalysts))
+            train_catalysts = all_shuffled[:n_train_catalysts + n_val_catalysts]
+            train_indices, _ = generate_splits(
                 df,
-                train_catalyst_names=remaining_catalysts,
+                train_catalyst_names=all_shuffled,
                 test_catalyst_names=[],
                 conditions=conditions,
                 full_catalyst_names=train_catalysts,
                 catalyst_name_column=catalyst_name_column,
             )
+            if n_test_catalysts > 0:
+                test_catalysts = all_shuffled[-n_test_catalysts :]
+                _, test_indices = generate_splits(
+                    df,
+                    train_catalyst_names=test_catalysts,
+                    test_catalyst_names=[],
+                    conditions=conditions,
+                    full_catalyst_names=[],
+                    catalyst_name_column=catalyst_name_column,
+                )
+            else:
+                test_catalysts = []
+                test_indices = train_indices[0:0]  # empty array of indices
         X_test = X[test_indices]
         y_test = y[test_indices]
 
