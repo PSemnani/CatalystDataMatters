@@ -396,7 +396,7 @@ def main(
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Create output directory
-    folder_name = f"virtual_xgb_cv_50"
+    folder_name = f"virtual_xgb_random_50"
     output_dir = Path(f"./{folder_name}/{n_train_catalysts}/")
     output_dir.mkdir(parents=True, exist_ok=True)
 
