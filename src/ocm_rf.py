@@ -149,14 +149,14 @@ def main(
     n_test_catalysts,
     split_strategy,
     n_folds=5,
-    cross_val_params=None,
+    cross_val_params=50,
     conditions={},
     folder_name=None,
     feature_sets=["base+atom_numbers+support", "base+descriptors", "all"],
     augmentations=[True, False],
 ):
     df = pd.read_csv(data_path)
-    folder_name = f"rf_cv_{cross_val_params}"
+    folder_name = f"rf_cv_random_{cross_val_params}"
     results_path = Path(f"./{folder_name}/{n_train_catalysts}/")
     results_path.mkdir(parents=True, exist_ok=True)
     results_rows = []
@@ -177,8 +177,9 @@ def main(
         for i, seed in enumerate(seeds):
             print(f"Running experiments for seed {seed}...")
             _cross_val_params = get_cross_validation_param_sets(
-                cross_val_params, seed=seed
+                f"rf_{cross_val_params}", seed=seed
             )
+            print(f"Using cross-validation with {len(_cross_val_params)} parameter sets.")
             for j, feature_set in enumerate(feature_sets):
                 if feature_set == "base+descriptors":
                     feature_cols = BASE_PROCESS + DESCRIPTORS
@@ -345,9 +346,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cross_val_params",
-        type=str,
-        default="rf_50",
-        help="Parameter set for cross-validation",
+        type=int,
+        default=50,
+        help="Number of hyper-parameter combinations randomly sampled for cross-validation (default: 50)",
     )
     parser.add_argument(
         "--conditions",
@@ -407,6 +408,13 @@ if __name__ == "__main__":
         conditions = CONDITIONS_CH4_O2_RATIO
     else:
         raise ValueError(f"Invalid conditions argument: {args.conditions}")
+
+    assert (
+        args.n_folds > 1
+    ), "Number of folds for cross-validation must be greater than 1."
+    assert (
+        args.cross_val_params > 0
+    ), "Number of cross-validation parameter sets must be greater than 0."
 
     augmentations = [augm.lower() in ["yes", "1"] for augm in args.augmentations]
     main(

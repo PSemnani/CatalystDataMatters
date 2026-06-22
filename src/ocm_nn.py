@@ -22,35 +22,6 @@ from utils import (
     get_cross_validation_param_sets,
 )
 
-nn_training_args_augmentation = {
-    "epochs": 20000,
-    "batch_size": 1024,
-    "hidden_dims": (256, 128, 64),
-    "lr": 5e-3,
-    "min_lr": 1e-5,
-    "weight_decay": 1e-5,
-    "patience": 1,
-    "factor": 0.9,
-    "dropout": 0.2,
-    "ema_decay": 0.99,
-    "ema_warmup": 5,
-    "early_stopping": 150,
-}
-nn_training_args = {
-    "epochs": 20000,
-    "batch_size": 1024,
-    "hidden_dims": (256, 128, 64),
-    "lr": 5e-3,
-    "min_lr": 1e-5,
-    "weight_decay": 1e-5,
-    "patience": 50,
-    "factor": 0.9,
-    "dropout": 0.2,
-    "ema_decay": 0.99,
-    "ema_warmup": 1,
-    "early_stopping": 1500,
-}
-
 
 # Simple Dataset wrapper
 class TabularDataset(Dataset):
@@ -395,10 +366,7 @@ def main(
             # Train neural network
             print(f"Training Neural Network model for feature set: {feature_set}...")
             print(f"Training {'with' if augm else 'without'} data augmentation...")
-            if val_params == 'default':
-                choices = [nn_training_args_augmentation if augm else nn_training_args]
-            else:
-                choices = get_cross_validation_param_sets(val_params, seed)
+            choices = get_cross_validation_param_sets(f"nn_{val_params}", seed)
             val_losses = []
             test_mses = []
             test_r2s = []
@@ -520,11 +488,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--val_params",
-        type=str,
-        default="random_25",
-        help="Parameter set for hyper-parameter search (default for fixed set with no search or nn_xx for xx random combinations)",
+        type=int,
+        default=25,
+        help="Number of hyper-parameter combinations randomly sampled for validation (default: 25)",
     )
+
     args = parser.parse_args()
+    assert args.val_params > 0, "val_params must be a positive integer"
     augmentations = [augm.lower() in ["yes", "1"] for augm in args.augmentations]
     main(
         args.data_path,
