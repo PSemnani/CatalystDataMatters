@@ -323,7 +323,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--n_train_catalysts",
         type=int,
-        default=39,
+        default=49,
         help="Number of training catalysts (default: 39)",
     )
     parser.add_argument(
