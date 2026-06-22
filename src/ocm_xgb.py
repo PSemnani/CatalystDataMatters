@@ -180,7 +180,7 @@ def main(
     n_test_catalysts,
     split_strategy,
     n_folds=5,
-    cross_val_params=None,
+    cross_val_params=50,
     conditions={},
     folder_name=None,
     feature_sets=["base+atom_numbers+support", "base+descriptors", "all"],
@@ -191,7 +191,7 @@ def main(
     # read data
     df = pd.read_csv(data_path)
     # storage path for results
-    folder_name = f"xgb_cv_{cross_val_params}"
+    folder_name = f"xgb_cv_random_{cross_val_params}"
     results_path = Path(f"./{folder_name}/{n_train_catalysts}/")
     results_path.mkdir(parents=True, exist_ok=True)
     # collect results
@@ -246,8 +246,8 @@ def main(
             print(f"Running experiments for seed {seed}...")
             # load cross validation parameter sets if needed
             _cross_val_params = get_cross_validation_param_sets(
-                cross_val_params, seed=seed
-            )  # e.g., "best_cases", "avg_best", "random_30"
+                f"random_{cross_val_params}", seed=seed
+            )
             for j, feature_set in enumerate(feature_sets):
                 # run experiments per feature set
                 if feature_set == "base+descriptors":
@@ -370,7 +370,8 @@ def main(
         # save figure
         if store_plots:
             fig.savefig(
-                results_path / f"xgb_test_results_{seeds[0]}-{seeds[-1]}_{cond_name}.png"
+                results_path
+                / f"xgb_test_results_{seeds[0]}-{seeds[-1]}_{cond_name}.png"
             )
     # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
@@ -433,9 +434,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--cross_val_params",
-        type=str,
-        default="random_50",
-        help="Parameter set for cross-validation: 'random_x' where x is the number of random samples from all combinations (default: 'random_30')",
+        type=int,
+        default=50,
+        help="Number of hyper-parameter combinations randomly sampled for cross-validation (default: 50)",
     )
     parser.add_argument(
         "--conditions",
@@ -507,6 +508,13 @@ if __name__ == "__main__":
         conditions = CONDITIONS_CH4_O2_RATIO
     else:
         raise ValueError(f"Invalid conditions argument: {args.conditions}")
+
+    assert (
+        args.n_folds > 1
+    ), "Number of folds for cross-validation must be greater than 1."
+    assert (
+        args.cross_val_params > 0
+    ), "Number of cross-validation parameter sets must be greater than 0."
 
     augmentations = [augm.lower() in ["yes", "1"] for augm in args.augmentations]
     main(
