@@ -1,6 +1,6 @@
 # CatalystDataMatters
 
-This repository contains the code, datasets, saved experiment outputs, and plotting notebook used to reproduce the experiments described in the paper. In addition to rerunning the main training workflows, the repository already includes archived experimental results under `experiments/` and the notebook used to generate the main-text figures at `notebooks/paper_plots.ipynb`.
+This repository contains the code and datasets required to reproduce the experiments described in the paper. In addition to rerunning the main training workflows, the repository already includes archived experimental results under `experiments/` and the notebook used to generate the main-text figures at `notebooks/paper_plots.ipynb`.
 
 ## Repository layout
 
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 
 ### 1. OCM XGBoost experiments
 
-The main experimental workflow for the OCM dataset is `src/ocm_xgb.py`. 
+The main workflow for the experimental OCM dataset is `src/ocm_xgb.py`. 
 
 Example:
 
@@ -66,7 +66,7 @@ Notes:
 - `--conditions` can be `None`, `temp_single`, or `ch4_o2_ratio`. If not `None`, the script will split the data based on target process condition values of temperature or ch4/o2 ratio instead of catalyst composition (note that `--split_strategy` must still be set to `catalyst` in that case). Default: None
 - Results are written under the repository root to a folder named from the selected CV setting, in this example `xgb_cv_random_50/`. It contains subfolders named by the training data volume (and the target process condition value if `--conditions` is not `None`). A single csv file containing all results can be compiled by calling `python src/gather_results.py ./xgb_cv_random_50`.
 
-### 2. Virtual catalyst XGBoost experiments
+### 2. Virtual catalyst OCM XGBoost experiments
 
 The main workflow for the virtual catalyst datasets is `src/virtual_xgb.py`.
 
