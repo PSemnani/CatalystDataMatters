@@ -157,10 +157,26 @@ It only takes a single `--seed` (default: 1) and requires the number of validati
 
 ## Citation
 
-If you use this work, please cite the corresponding publication:
+If you use this code or data from this repository, please cite the corresponding publication:
 
 ```
-Citation will be added soon.
+Citation will be added upon publication.
+```
+
+If you use the enriched experimental dataset (`Datasets/OCM-NguyenEtAl_with_descriptors`) please also cite its original source:
+
+```
+@article{nguyen2019high,
+  title={High-throughput experimentation and catalyst informatics for oxidative coupling of methane},
+  author={Nguyen, Thanh Nhat and Nhat, Thuy Tran Phuong and Takimoto, Ken and Thakur, Ashutosh and Nishimura, Shun and Ohyama, Junya and Miyazato, Itsuki and Takahashi, Lauren and Fujima, Jun and Takahashi, Keisuke and others},
+  journal={ACS Catalysis},
+  volume={10},
+  number={2},
+  pages={921--932},
+  year={2019},
+  publisher={ACS Publications},
+  DOI= {10.1021/acscatal.9b04293}
+}
 ```
 
 
