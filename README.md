@@ -163,7 +163,7 @@ If you use this code or data from this repository, please cite the corresponding
 Citation will be added upon publication.
 ```
 
-If you use the enriched experimental dataset (`Datasets/OCM-NguyenEtAl_with_descriptors`) please also cite its original source:
+If you use the enriched experimental dataset (`Datasets/OCM-NguyenEtAl_with_descriptors.csv`) please also cite its original source:
 
 ```
 @article{nguyen2019high,
