@@ -1,4 +1,4 @@
-# CatalystDataMatters
+# Code and Data of "How Far Can Machine Learning Guide Catalyst Discovery?"
 
 This repository contains the code and datasets required to reproduce the experiments described in the paper. In addition to rerunning the main training workflows, the repository already includes archived experimental results under `experiments/` and the notebook used to generate the main-text figures at `notebooks/paper_plots.ipynb`.
 
