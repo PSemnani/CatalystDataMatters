@@ -157,10 +157,19 @@ It only takes a single `--seed` (default: 1) and requires the number of validati
 
 ## Citation
 
-If you use this code or data from this repository, please cite the corresponding publication:
+If you use the code or data from this repository, please cite the corresponding publication:
 
-```
-Citation will be added upon publication.
+> Semnani, P., Gebauer, N. W. A., Alves Sequeira, B., Zareghorbaei, S., Thybaut, J. W., Vermeire, F. H., & Mendes, P. S. F. (2026). *How Far Can Machine Learning Guide Catalyst Discovery?* ChemRxiv. https://doi.org/10.26434/chemrxiv.15005240
+
+```bibtex
+@article{semnani2026far,
+  title   = {How Far Can Machine Learning Guide Catalyst Discovery?},
+  author  = {Semnani, Parastoo and Gebauer, Niklas W. A. and Alves Sequeira, B{\'a}rbara and Zareghorbaei, Soroush and Thybaut, Joris W. and Vermeire, Florence H. and Mendes, Pedro S. F.},
+  year    = {2026},
+  howpublished = {ChemRxiv preprint},
+  doi     = {10.26434/chemrxiv.15005240},
+  url     = {https://chemrxiv.org/doi/full/10.26434/chemrxiv.15005240/v1}
+}
 ```
 
 If you use the enriched experimental dataset (`Dataset/OCM-NguyenEtAl_with_descriptors.csv`) please also cite its original source:
