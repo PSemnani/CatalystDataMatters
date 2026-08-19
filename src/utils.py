@@ -120,6 +120,9 @@ settings_to_filename_map = {
     ("base+atom_numbers+support", True): "na",
     ("all", False): "a",
     ("all", True): "aa",
+    ("one_hot", False): "oh",
+    ("one_hot", True): "oha",
+    ("invariant", False): "inv",
     ("unique", True): "aa+u",
     ("non_unique", True): "aa+nu",
     ("threshold", True): "aa+thresh",
@@ -214,7 +217,7 @@ def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
     return pd.get_dummies(df, columns=column_names, drop_first=False)
 
 
-def get_invariant_embeddings(df):
+def get_invariant_embedding(df):
     """Get invariant embedding for the elements and support columns in a DataFrame.
         The invariant embedding is obtained by having one feature per element and support.
         The support is one-hot encoded, whereas the elements are indicated with their 

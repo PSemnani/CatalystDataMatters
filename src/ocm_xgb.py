@@ -16,6 +16,8 @@ from utils import (
     CONDITIONS_TEMP_SINGLE,
     CONDITIONS_TEMP_PAIRS,
     CONDITIONS_CH4_O2_RATIO,
+    get_invariant_embedding,
+    get_one_hot_encoding,
     get_cross_validation_param_sets,
     scale_data,
     split_data,
@@ -356,10 +358,11 @@ def main(
                         }
                     )
                     # collect model and splits
-                    model_id = (
-                        f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
-                    )
-                    _collected_models[model_id] = xgb_results["model"]
+                    if store_models:
+                        model_id = (
+                            f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
+                        )
+                        _collected_models[model_id] = xgb_results["model"]
                     if seed not in _collected_splits:
                         _collected_splits[seed] = {
                             "train_indices": train_indices,
@@ -380,9 +383,9 @@ def main(
         results_df.to_csv(summary_path, mode="a", header=False, index=False)
     else:
         results_df.to_csv(summary_path, index=False)
-    # save models to disk
-    models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
     if store_models:
+        # save models to disk
+        models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
         dump(collected_models, models_path)
     # save data splits to disk
     splits_path = results_path / f"data_splits_{seeds[0]}-{seeds[-1]}.joblib"
