@@ -200,6 +200,71 @@ def release_lock(lock_path: Path):
         pass
 
 
+def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
+    """Get one-hot encoding for specified columns in a DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        column_names (list): List of column names to one-hot encode (default: ATOM_NUMBERS + SUPPORT).
+
+    Returns:
+        pd.DataFrame: A new DataFrame with one-hot encoded columns that also contains
+            all columns not in column_names in the same format as before.
+    """
+    return pd.get_dummies(df, columns=column_names, drop_first=False)
+
+
+def get_invariant_embeddings(df):
+    """Get invariant embedding for the elements and support columns in a DataFrame.
+        The invariant embedding is obtained by having one feature per element and support.
+        The support is one-hot encoded, whereas the elements are indicated with their 
+        corresponding concentration.
+        For example, if the input DataFrame has elements 1,...,5 and supports A, B, C,
+        and a data point has support B and elements M1=3, M2=5, and M3=1 with 
+        concentrations 0.2, 0.5, and 0.3, respectively, the invariant embedding for this
+        data point will be [0.3, 0, 0.2, 0, 0.5, 0, 1, 0].
+
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+
+    Returns:
+        pd.DataFrame: A new DataFrame with invariant embeddings for elements and support.
+    """
+    # Get unique elements and supports
+    unique_elements = sorted(set(df[ATOM_NUMBERS[0]].unique()).union(
+        df[ATOM_NUMBERS[1]].unique()).union(df[ATOM_NUMBERS[2]].unique())
+    )
+    unique_supports = sorted(df[SUPPORT[0]].unique())
+    element_cols = [f"element_{str(e)}" for e in unique_elements]
+    support_cols = [f"support_{str(s)}" for s in unique_supports]
+    # Initialize the invariant embedding DataFrame
+    invariant_df = pd.DataFrame(
+        0,
+        index=df.index,
+        columns=element_cols + support_cols,
+        dtype=float,
+    )
+
+    # Fill in the element concentrations
+    for i, atom_col in enumerate(ATOM_NUMBERS):
+        for element, name in zip(unique_elements, element_cols):
+            mask = df[atom_col] == element
+            invariant_df.loc[mask, name] = df.loc[mask, f"M{i+1}_mol%"]/100  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
+
+    # Fill in the one-hot encoded supports
+    for support, name in zip(unique_supports, support_cols):
+        invariant_df.loc[df[SUPPORT[0]] == support, name] = 1
+
+    # Cast one-hot support columns to integer dtype (keeps element columns as float)
+    invariant_df[support_cols] = invariant_df[support_cols].astype("int64")
+
+    # Prepend all columns not in ATOM_NUMBERS + SUPPORT and ["M1_mol%", "M2_mol%", "M3_mol%"] to the invariant_df
+    other_cols = [col for col in df.columns if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]]
+    invariant_df = pd.concat([df[other_cols], invariant_df], axis=1)
+
+    return invariant_df
+
 def get_cross_validation_masks(
     df,
     train_indices,
@@ -385,7 +450,7 @@ def split_data(
             # the test set will only consist of filtered data points from
             # n_test_catalysts catalysts in the train set at the target condition
             all_shuffled = rng.sample(list(all_catalysts), len(all_catalysts))
-            train_catalysts = all_shuffled[:n_train_catalysts + n_val_catalysts]
+            train_catalysts = all_shuffled[: n_train_catalysts + n_val_catalysts]
             train_indices, _ = generate_splits(
                 df,
                 train_catalyst_names=all_shuffled,
@@ -395,7 +460,7 @@ def split_data(
                 catalyst_name_column=catalyst_name_column,
             )
             if n_test_catalysts > 0:
-                test_catalysts = all_shuffled[-n_test_catalysts :]
+                test_catalysts = all_shuffled[-n_test_catalysts:]
                 _, test_indices = generate_splits(
                     df,
                     train_catalyst_names=test_catalysts,
