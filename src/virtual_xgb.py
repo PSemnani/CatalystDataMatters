@@ -37,7 +37,7 @@ sns.set_style("whitegrid")
 CATALYST_ID = "cat_ID"
 TARGET = "C2y"
 DESCRIPTORS = [f"D{i}" for i in range(1, 17)]
-PROCESS_CONDITIONS = ["T", "Q", "CH4_O2", "InertFraction"]
+PROCESS_CONDITIONS = ["T", "Q", "CH4_O2", "AF"]
 ALL_FEATURES = DESCRIPTORS + PROCESS_CONDITIONS
 
 # Fixed experiment parameters
