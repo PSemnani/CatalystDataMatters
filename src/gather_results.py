@@ -20,6 +20,9 @@ def main() -> None:
         # go through all folders and load file "training_results.csv" and concatenate them into a single dataframe
         all_results = get_results_csv(experiment_path)
         print(f"Found {len(all_results)} result files.")
+        if len(all_results) == 0:
+            print("ERROR: No result files found. Did you choose the correct folder? Exiting.")
+            return
         # concatenate all results
         results_df = pd.concat(all_results, ignore_index=True)
         # save gathered results
