@@ -166,7 +166,7 @@ def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
 
 def get_results_csv(experiment_path: Path) -> pd.DataFrame:
     if experiment_path.exists() and experiment_path.is_dir():
-        result_file = experiment_path / "results_summary.csv"
+        result_file = experiment_path / "training_results.csv"
         if result_file.exists():
             df_res = pd.read_csv(result_file)
             return [df_res]
