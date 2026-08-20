@@ -142,16 +142,23 @@ def compute_ranking_performance(y_true, y_pred, cat_ids, top_k=3):
     # use maximum of y_true and y_pred per catalyst to determine ranking
     df_agg = df.groupby("cat_id").agg({"y_true": "max", "y_pred": "max"}).reset_index()
 
-    # Get top-k catalysts based on aggregated true and predicted values
-    top_k_true = df_agg.nlargest(top_k, "y_true", keep="all")["cat_id"].values
-    top_k_pred = df_agg.nlargest(top_k, "y_pred", keep="all")["cat_id"].values
+    # check if predicted y is constant
+    if df_agg["y_pred"].nunique() == 1:
+        print("WARNING: Predicted values are constant. Spearman correlation is undefined.")
+        spearman_corr = 0.0
+        top_k_accuracy = 0.0
+    else:
+        # Get top-k catalysts based on aggregated true and predicted values
+        top_k_true = df_agg.nlargest(top_k, "y_true", keep="all")["cat_id"].values
+        # use length of ground_truth top_k_true to determine top_k_pred in case of ties
+        top_k_pred = df_agg.nlargest(len(top_k_true), "y_pred")["cat_id"].values
 
-    # Compute top-k accuracy by taking intersection of sets
-    # Use min for cases where there are ties in the top-k selection
-    top_k_accuracy = min(1, len(set(top_k_true) & set(top_k_pred)) / top_k)
+        # Compute top-k accuracy by taking intersection of sets
+        # Use min for cases where there are ties in the top-k selection
+        top_k_accuracy = min(1, len(set(top_k_true) & set(top_k_pred)) / top_k)
 
-    # Compute Spearman correlation
-    spearman_corr, _ = spearmanr(df_agg["y_true"], df_agg["y_pred"])
+        # Compute Spearman correlation
+        spearman_corr, _ = spearmanr(df_agg["y_true"], df_agg["y_pred"])
 
     return {
         f"top_{top_k}_accuracy": top_k_accuracy,
