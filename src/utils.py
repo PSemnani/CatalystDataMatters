@@ -379,6 +379,8 @@ def split_data(
     return_indices=False,
     conditions={},
     catalyst_name_column="Name",
+    train_pool=None,
+    test_pool=None,
 ):
     """
     Splits the data into training, validation, and test sets based on the specified strategy.
@@ -400,6 +402,8 @@ def split_data(
         return_indices (bool): Whether to return the indices of the splits.
         conditions (dict): Conditions for filtering the data before splitting. Only used with 'catalyst' split strategy.
         catalyst_name_column (str): The name of the column containing catalyst names in df.
+        train_pool (list): Optional list of catalyst names to use as a pool for drawing training catalysts. Only implemented for split_strategy='catalyst' with conditions={}.
+        test_pool (list): Optional list of catalyst names to use as a pool for drawing test catalysts. Only implemented for split_strategy='catalyst' with conditions={}.
 
     Returns:
         tuple: A tuple containing the training, validation, and test sets (X_train, y_train, X_val, y_val, X_test, y_test).
@@ -435,8 +439,18 @@ def split_data(
         # sample test catalysts and train catalysts (train includes val for now)
         if len(conditions) == 0:
             # no conditions provided, split according to catalyst names only
-            test_catalysts = rng.sample(list(all_catalysts), n_test_catalysts)
-            remaining_catalysts = [c for c in all_catalysts if c not in test_catalysts]
+            if train_pool is None:
+                train_pool = all_catalysts
+            if test_pool is None:
+                test_pool = all_catalysts
+            assert len(test_pool) >= n_test_catalysts, \
+                f"Not enough catalysts in test_pool ({len(test_pool)}) for the " \
+                f"requested split size ({n_test_catalysts})."
+            test_catalysts = rng.sample(list(test_pool), n_test_catalysts)
+            remaining_catalysts = [c for c in train_pool if c not in test_catalysts]
+            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, \
+                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "\
+                f"the requested split size ({n_train_catalysts + n_val_catalysts})."
             train_catalysts = rng.sample(
                 remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
             )
