@@ -297,7 +297,7 @@ def main(
                             "test_indices": test_indices,
                         }
     results_df = pd.DataFrame(results_rows)
-    summary_path = results_path / "results_summary.csv"
+    summary_path = results_path / "training_results.csv"
     if summary_path.exists():
         results_df.to_csv(summary_path, mode="a", header=False, index=False)
     else:
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         "--n_train_catalysts",
         type=int,
         default=49,
-        help="Number of training catalysts (default: 39)",
+        help="Number of training catalysts (default: 49)",
     )
     parser.add_argument(
         "--n_test_catalysts",

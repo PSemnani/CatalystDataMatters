@@ -17,7 +17,7 @@ def main() -> None:
     experiment_path = Path(args.experiment_path)
     #load data
     if not (experiment_path / "gathered_results.csv").exists():
-        # go through all folders and load file "results_summary.csv" and concatenate them into a single dataframe
+        # go through all folders and load file "training_results.csv" and concatenate them into a single dataframe
         all_results = get_results_csv(experiment_path)
         print(f"Found {len(all_results)} result files.")
         # concatenate all results

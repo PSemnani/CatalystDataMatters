@@ -430,7 +430,7 @@ def main(
 
     # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
-    summary_path = results_path / "results_summary.csv"
+    summary_path = results_path / "training_results.csv"
     if summary_path.exists():
         results_df.to_csv(summary_path, mode="a", header=False, index=False)
     else:
