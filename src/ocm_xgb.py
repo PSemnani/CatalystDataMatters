@@ -292,6 +292,19 @@ def main(
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
                 elif feature_set == "all":  # all features
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
+                elif feature_set in ["one_hot", "invariant"]:
+                    feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
+                    df = df[feature_cols + ["C2y", "Name"]]
+                    if feature_set == "one_hot":
+                        df = get_one_hot_encoding(df)
+                    elif feature_set == "invariant":
+                        df = get_invariant_embedding(df)
+                        if True in augmentations:
+                            print(
+                                "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
+                            )
+                            augmentations = [False]
+                    feature_cols = [col for col in df.columns if col not in ["C2y", "Name"]]
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -497,7 +510,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (default: all three sets)",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant') (default: all but 'one_hot' and 'invariant') ",
     )
     parser.add_argument(
         "--augmentations",
