@@ -108,7 +108,7 @@ def load_augment_scale_data(
     y_val = None
     # apply augmentation if needed
     if augmentation:
-        X_train, y_train, X_val, y_val, X_test, y_test, _ = augment_data(
+        X_train, y_train, X_val, y_val, X_test, y_test, _, _ = augment_data(
             X_train,
             y_train,
             X_val,

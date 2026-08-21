@@ -18,6 +18,7 @@ from utils import (
     scale_data,
     split_data,
     augment_data,
+    scatter_mean,
     get_cross_validation_masks,
     settings_to_filename_map,
 )
@@ -50,17 +51,21 @@ def train_random_forest(
         y_val = None
 
     # Data augmentation
+    test_group_ids = None
     if augment_data_flag:
-        X_train, y_train, X_val, y_val, X_test, y_test, cross_val_masks = augment_data(
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-            feature_cols,
-            other_lists=cross_val_masks,
+        X_train, y_train, X_val, y_val, X_test, y_test, cross_val_masks, group_ids = (
+            augment_data(
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                X_test,
+                y_test,
+                feature_cols,
+                other_lists=cross_val_masks,
+            )
         )
+        test_group_ids = group_ids[2]
 
     # Scaling
     X_train, X_val, X_test, scaler = scale_data(
@@ -115,6 +120,12 @@ def train_random_forest(
 
     # evaluate on test set
     preds = model.predict(X_test)
+    if test_group_ids is not None:
+        # collapse augmented copies back to one prediction per original row,
+        # so downstream evaluation code doesn't need to know about augmentation
+        preds = scatter_mean(preds, test_group_ids)
+        _, first_idx = np.unique(test_group_ids, return_index=True)
+        y_test = y_test[first_idx]
     test_mse = float(np.mean((preds - y_test) ** 2))
     test_mae = float(np.mean(np.abs(preds - y_test)))
     test_rmse = float(np.sqrt(test_mse))
@@ -249,10 +260,6 @@ def main(
                     # compute metrics without plotting
                     y_true = rf_results["y_test"]
                     y_pred = rf_results["preds_test"]
-                    if augm:
-                        # average predictions over permutations
-                        y_pred = y_pred.reshape(-1, 6).mean(axis=1)
-                        y_true = y_true[::6]
                     ss_res = np.sum((y_pred - y_true) ** 2)
                     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
                     r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")

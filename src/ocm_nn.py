@@ -19,6 +19,7 @@ from utils import (
     scale_data,
     split_data,
     augment_data,
+    scatter_mean,
     get_cross_validation_param_sets,
 )
 
@@ -80,8 +81,9 @@ def train_nn(
     assert ema_warmup >= 1, "ema_warmup must be at least 1"
 
     # Data augmentation (permutations of M1, M2, M3 related features)
+    test_group_ids = None
     if augment_data_flag:
-        X_train, y_train, X_val, y_val, X_test, y_test, _ = augment_data(
+        X_train, y_train, X_val, y_val, X_test, y_test, _, group_ids = augment_data(
             X_train,
             y_train,
             X_val,
@@ -90,6 +92,7 @@ def train_nn(
             y_test,
             feature_cols,
         )
+        test_group_ids = group_ids[2]
 
     # Scaling
     X_train, X_val, X_test, scaler = scale_data(
@@ -227,6 +230,13 @@ def train_nn(
     preds_all = np.concatenate(preds_all)
     ys_all = np.concatenate(ys_all)
 
+    if test_group_ids is not None:
+        # collapse augmented copies back to one prediction per original row,
+        # so downstream evaluation code doesn't need to know about augmentation
+        preds_all = scatter_mean(preds_all, test_group_ids)
+        _, first_idx = np.unique(test_group_ids, return_index=True)
+        ys_all = ys_all[first_idx]
+
     test_mse = float(np.mean((preds_all - ys_all) ** 2))
     test_mae = float(np.mean(np.abs(preds_all - ys_all)))
     test_rmse = float(np.sqrt(test_mse))
@@ -236,21 +246,6 @@ def train_nn(
 
     print(f"Test R2: {test_r2:.4f}")
     print(f"Test MSE: {test_mse:.4f}, MAE: {test_mae:.4f}, RMSE: {test_rmse:.4f}")
-
-    if augment_data_flag:
-        # take mean of premutation predictions for final test metrics
-        _preds_all = preds_all.reshape(-1, 6)
-        _preds_all = np.mean(_preds_all, axis=1)
-        _ys_all = ys_all[::6]
-        test_mse = float(np.mean((_preds_all - _ys_all) ** 2))
-        test_mae = float(np.mean(np.abs(_preds_all - _ys_all)))
-        test_rmse = float(np.sqrt(test_mse))
-        ss_res = np.sum((_preds_all - _ys_all) ** 2)
-        ss_tot = np.sum((_ys_all - np.mean(_ys_all)) ** 2)
-        test_r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-        print(f"Results after averaging over permutations to get predictions:")
-        print(f"Test R2: {test_r2:.4f}")
-        print(f"Test MSE: {test_mse:.4f}, MAE: {test_mae:.4f}, RMSE: {test_rmse:.4f}")
 
     results = {
         "model": model,
@@ -291,11 +286,7 @@ def plot_training_history(history):
     return plt.gcf()
 
 
-def plot_test_results(y_true, y_pred, accumulate_permutations=False):
-    if accumulate_permutations:
-        # average predictions over permutations
-        y_pred = y_pred.reshape(-1, 6).mean(axis=1)
-        y_true = y_true[::6]
+def plot_test_results(y_true, y_pred):
     # compute R2, MAE, RMSE
     r2 = 1.0 - np.sum((y_pred - y_true) ** 2) / np.sum((y_true - np.mean(y_true)) ** 2)
     mae = np.mean(np.abs(y_pred - y_true))
@@ -390,7 +381,6 @@ def main(
                 _, r2, mae, mse = plot_test_results(
                     nn_results["y_test"],
                     nn_results["preds_test"],
-                    accumulate_permutations=augm,
                 )
                 elapsed_time = time() - start_time
                 print(f"NN training run {n+1} completed in {elapsed_time:.2f} seconds.")
