@@ -356,24 +356,26 @@ def main(
                     )
                     elapsed_time = time() - start_time
                     print(f"Training completed in {elapsed_time:.2f} seconds.")
+                    # compute metrics
                     r2, mae, mse, absolute_errors = plot_test_results(
                         ax=axes[i, j * len(augmentations) + k],
                         y_true=xgb_results["y_test"],
                         y_pred=xgb_results["preds_test"],
                     )
-                    # compute MAE per catalyst and store in results
+                    # compute MAE per catalyst
                     test_df = df.iloc[test_indices].reset_index(drop=True)
                     test_df["absolute_error"] = absolute_errors
                     mae_by_catalyst = test_df.groupby("Name")["absolute_error"].mean()
-                    # compute ranking performance metrics
-                    ranking_metrics = compute_ranking_performance(
+                    # compute ranking performance
+                    ranking_performance = compute_ranking_performance(
                         test_df, target_col, xgb_results["preds_test"], top_k=3
                     )
                     # print results for this experiment
                     print(f"Test R2: {r2:.4f}")
                     print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {np.sqrt(mse):.4f}")
-                    for k, v in ranking_metrics.items():
+                    for k, v in ranking_performance.items():
                         print(f"{k}: {v:.4f}")
+                    # store results for this experiment
                     results_rows.append(
                         {
                             "model_type": "xgboost",
@@ -397,7 +399,7 @@ def main(
                                 for i, mae_val in enumerate(mae_by_catalyst)
                             },
                             "training_time": elapsed_time,
-                            **{f"ranking_{k}": v for k, v in ranking_metrics.items()},
+                            **{f"ranking_{k}": v for k, v in ranking_performance.items()},
                         }
                     )
                     # collect model and splits
