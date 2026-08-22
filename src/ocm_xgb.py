@@ -250,7 +250,7 @@ def main(
     augmentations=[True, False],
     store_plots=False,
     store_models=False,
-    compute_shapley=False,
+    compute_shap=False,
 ):
     # read data
     df = pd.read_csv(data_path)
@@ -418,7 +418,7 @@ def main(
                         print(f"{k}: {v:.4f}")
                     # compute SHAP values
                     shap_cols = {}
-                    if compute_shapley:
+                    if compute_shap:
                         shap_cols = compute_shap_values(
                             xgb_results["model"],
                             xgb_results["X_test"],
@@ -567,7 +567,7 @@ if __name__ == "__main__":
         help="Whether to store the models (default: False)",
     )
     parser.add_argument(
-        "--compute_shapley",
+        "--compute_shap",
         action="store_true",
         help="Whether to compute SHAP values for each trained model directly "
         "after training (default: False)",
@@ -634,5 +634,5 @@ if __name__ == "__main__":
         augmentations=augmentations,
         store_plots=args.store_plots,
         store_models=args.store_models,
-        compute_shapley=args.compute_shapley,
+        compute_shap=args.compute_shap,
     )
