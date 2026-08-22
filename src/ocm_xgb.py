@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import shap
 from scipy.stats import spearmanr
 
 from utils import (
@@ -135,6 +136,7 @@ def train_xgboost(
         "history": [],
         "preds_test": preds,
         "y_test": y_test,
+        "X_test": X_test,
     }
     return results
 
@@ -209,6 +211,31 @@ def compute_ranking_performance(test_df, target_col, y_pred, top_k=3):
     }
 
 
+def compute_shap_values(model, X_test, feature_cols):
+    """
+    Compute mean absolute SHAP values per feature for a trained model, using
+    the same computation as ocm_xgb_compute_shap.py so that results from both
+    scripts are directly comparable.
+
+    Args:
+        model: Trained XGBoost model.
+        X_test: Test features the model was evaluated on (post augmentation
+            and scaling).
+        feature_cols: List of feature column names, in the same order as the
+            columns of X_test.
+
+    Returns:
+        dict: Mapping "shap_<feature_col>" -> mean absolute SHAP value.
+    """
+    expl = shap.TreeExplainer(model)
+    sv = expl(X_test, check_additivity=False)
+    values = sv.values if hasattr(sv, "values") else sv  # compatibility
+    mean_abs_shap = np.mean(np.abs(values), axis=0)
+    return {
+        f"shap_{col}": val for col, val in zip(feature_cols, mean_abs_shap)
+    }
+
+
 def main(
     data_path,
     seeds,
@@ -223,6 +250,7 @@ def main(
     augmentations=[True, False],
     store_plots=False,
     store_models=False,
+    compute_shapley=False,
 ):
     # read data
     df = pd.read_csv(data_path)
@@ -388,6 +416,14 @@ def main(
                     print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {np.sqrt(mse):.4f}")
                     for k, v in ranking_performance.items():
                         print(f"{k}: {v:.4f}")
+                    # compute SHAP values
+                    shap_cols = {}
+                    if compute_shapley:
+                        shap_cols = compute_shap_values(
+                            xgb_results["model"],
+                            xgb_results["X_test"],
+                            feature_cols,
+                        )
                     # store results for this experiment
                     results_rows.append(
                         {
@@ -413,6 +449,7 @@ def main(
                             },
                             "training_time": elapsed_time,
                             **{f"ranking_{k}": v for k, v in ranking_performance.items()},
+                            **shap_cols,
                         }
                     )
                     # collect model and splits
@@ -529,6 +566,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Whether to store the models (default: False)",
     )
+    parser.add_argument(
+        "--compute_shapley",
+        action="store_true",
+        help="Whether to compute SHAP values for each trained model directly "
+        "after training (default: False)",
+    )
 
     def parse_seeds(tokens):
         out = []
@@ -591,4 +634,5 @@ if __name__ == "__main__":
         augmentations=augmentations,
         store_plots=args.store_plots,
         store_models=args.store_models,
+        compute_shapley=args.compute_shapley,
     )
