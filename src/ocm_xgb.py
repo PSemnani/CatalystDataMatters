@@ -328,11 +328,6 @@ def main(
                         _df = get_one_hot_encoding(_df)
                     elif feature_set == "invariant":
                         _df = get_invariant_embedding(_df)
-                        if True in augmentations:
-                            print(
-                                "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
-                            )
-                            augmentations = [False]
                     feature_cols = [col for col in _df.columns if col not in ["C2y", "Name"]]
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
@@ -377,6 +372,13 @@ def main(
                 )
 
                 for k, augm in enumerate(augmentations):
+                    # check if augmentation is applicable
+                    if feature_set == "invariant" and augm:
+                        print(
+                            "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
+                        )
+                        continue
+
                     # Train xgboost model
                     print(f"Training XGBoost model for feature set: {feature_set}...")
                     print(
