@@ -313,6 +313,7 @@ def main(
                 f"random_{cross_val_params}", seed=seed
             )
             for j, feature_set in enumerate(feature_sets):
+                _df = df
                 # run experiments per feature set
                 if feature_set == "base+descriptors":
                     feature_cols = BASE_PROCESS + DESCRIPTORS
@@ -322,17 +323,17 @@ def main(
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
                 elif feature_set in ["one_hot", "invariant"]:
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
-                    df = df[feature_cols + ["C2y", "Name"]]
+                    _df = df[feature_cols + ["C2y", "Name"]]
                     if feature_set == "one_hot":
-                        df = get_one_hot_encoding(df)
+                        _df = get_one_hot_encoding(_df)
                     elif feature_set == "invariant":
-                        df = get_invariant_embedding(df)
+                        _df = get_invariant_embedding(_df)
                         if True in augmentations:
                             print(
                                 "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
                             )
                             augmentations = [False]
-                    feature_cols = [col for col in df.columns if col not in ["C2y", "Name"]]
+                    feature_cols = [col for col in _df.columns if col not in ["C2y", "Name"]]
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -354,7 +355,7 @@ def main(
                     val_indices,
                     test_indices,
                 ) = split_data(
-                    df,
+                    _df,
                     feature_cols,
                     target_col,
                     split_strategy,
@@ -367,7 +368,7 @@ def main(
                 )
                 # get cross-validation masks for training set if needed
                 cross_val_masks = get_cross_validation_masks(
-                    df,
+                    _df,
                     train_indices,
                     split_strategy,
                     rng=rng,
@@ -404,7 +405,7 @@ def main(
                         y_pred=xgb_results["preds_test"],
                     )
                     # compute MAE per catalyst
-                    test_df = df.iloc[test_indices].reset_index(drop=True)
+                    test_df = _df.iloc[test_indices].reset_index(drop=True)
                     test_df["absolute_error"] = absolute_errors
                     mae_by_catalyst = test_df.groupby("Name")["absolute_error"].mean()
                     # compute ranking performance
