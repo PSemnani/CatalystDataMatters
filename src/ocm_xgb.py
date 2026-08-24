@@ -25,6 +25,7 @@ from utils import (
     split_data,
     augment_data,
     scatter_mean,
+    save_results_csv,
     get_cross_validation_masks,
     settings_to_filename_map,
 )
@@ -477,10 +478,7 @@ def main(
     # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
     summary_path = results_path / "training_results.csv"
-    if summary_path.exists():
-        results_df.to_csv(summary_path, mode="a", header=False, index=False)
-    else:
-        results_df.to_csv(summary_path, index=False)
+    save_results_csv(results_df, summary_path)
     if store_models:
         # save models to disk
         models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
