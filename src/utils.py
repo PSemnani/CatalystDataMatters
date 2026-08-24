@@ -179,6 +179,42 @@ def get_results_csv(experiment_path: Path) -> pd.DataFrame:
         return []
 
 
+def save_results_csv(results_df: pd.DataFrame, summary_path: Path):
+    """Write/append results_df to summary_path as CSV, without ever producing
+    a file with an inconsistent column count across rows.
+
+    If summary_path doesn't exist yet, it is created normally. If it exists
+    and results_df has the exact same columns (e.g. repeated runs with the
+    same settings), the new rows are appended cheaply. If the columns differ
+    (e.g. one run computed SHAP values and another didn't, so one has extra
+    shap_* columns), appending with a mismatched header would silently
+    produce a CSV that later fails to parse -- instead, the existing file is
+    read back in, merged with results_df on the union of columns (missing
+    values filled with NaN, same as pd.concat), and rewritten with a single
+    consistent header.
+
+    Args:
+        results_df (pd.DataFrame): New results to store.
+        summary_path (Path): Path to the (possibly already existing) CSV file.
+    """
+    summary_path = Path(summary_path)
+    if not summary_path.exists():
+        results_df.to_csv(summary_path, index=False)
+        return
+    existing_cols = list(pd.read_csv(summary_path, nrows=0).columns)
+    if list(results_df.columns) == existing_cols:
+        results_df.to_csv(summary_path, mode="a", header=False, index=False)
+        return
+    print(
+        f"WARNING: Columns of new results differ from existing {summary_path} "
+        "(e.g. some experiments computed SHAP values and others didn't). "
+        "Rewriting the file with the union of columns instead of appending."
+    )
+    existing_df = pd.read_csv(summary_path)
+    merged = pd.concat([existing_df, results_df], ignore_index=True)
+    merged.to_csv(summary_path, index=False)
+
+
 def acquire_lock(lock_path: Path, timeout: float = 30.0, poll: float = 0.1):
     start = time.time()
     lock_path = Path(lock_path)
