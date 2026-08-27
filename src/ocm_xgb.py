@@ -407,10 +407,18 @@ def main(
                         y_true=xgb_results["y_test"],
                         y_pred=xgb_results["preds_test"],
                     )
-                    # compute MAE per catalyst
+                    # compute per-catalyst MAE and max true/predicted yield
                     test_df = _df.iloc[test_indices].reset_index(drop=True)
                     test_df["absolute_error"] = absolute_errors
-                    mae_by_catalyst = test_df.groupby("Name")["absolute_error"].mean()
+                    test_df["y_pred"] = xgb_results["preds_test"]
+                    catalyst_stats = test_df.groupby("Name").agg(
+                        absolute_error=("absolute_error", "mean"),
+                        true_yield_max=(target_col, "max"),
+                        pred_yield_max=("y_pred", "max"),
+                    )
+                    mae_by_catalyst = catalyst_stats["absolute_error"]
+                    true_yield_max_by_catalyst = catalyst_stats["true_yield_max"]
+                    pred_yield_max_by_catalyst = catalyst_stats["pred_yield_max"]
                     # compute ranking performance
                     ranking_performance = compute_ranking_performance(
                         test_df, target_col, xgb_results["preds_test"], top_k=3
@@ -445,11 +453,19 @@ def main(
                             # merged per-catalyst entries
                             **{
                                 f"test_catalyst_{i}": name
-                                for i, name in enumerate(mae_by_catalyst.index)
+                                for i, name in enumerate(catalyst_stats.index)
                             },
                             **{
                                 f"mae_test_catalyst_{i}": mae_val
                                 for i, mae_val in enumerate(mae_by_catalyst)
+                            },
+                            **{
+                                f"true_yield_max_test_catalyst_{i}": val
+                                for i, val in enumerate(true_yield_max_by_catalyst)
+                            },
+                            **{
+                                f"pred_yield_max_test_catalyst_{i}": val
+                                for i, val in enumerate(pred_yield_max_by_catalyst)
                             },
                             "training_time": elapsed_time,
                             **{f"ranking_{k}": v for k, v in ranking_performance.items()},
