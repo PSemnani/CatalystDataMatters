@@ -25,6 +25,28 @@ def main() -> None:
             return
         # concatenate all results
         results_df = pd.concat(all_results, ignore_index=True)
+        # remove duplicate runs (e.g. from reruns), keeping the row with the fewest NaNs
+        dedup_cols = [
+            "model_type",
+            "feature_set",
+            "augmentation",
+            "n_train_catalysts",
+            "n_test_catalysts",
+            "seed",
+            "condition",
+        ]
+        n_before = len(results_df)
+        nan_counts = results_df.isna().sum(axis=1)
+        results_df = (
+            results_df.assign(_nan_count=nan_counts)
+            .sort_values("_nan_count", kind="stable")
+            .drop_duplicates(subset=dedup_cols, keep="first")
+            .drop(columns="_nan_count")
+            .sort_index()
+        )
+        n_removed = n_before - len(results_df)
+        if n_removed > 0:
+            print(f"Removed {n_removed} duplicate rows (kept the row with fewest NaN values for each duplicate).")
         # save gathered results
         results_df.to_csv(experiment_path / "gathered_results.csv", index=False)
         print(f"Saved gathered results to {experiment_path / 'gathered_results.csv'}.")
