@@ -198,21 +198,26 @@ def save_results_csv(results_df: pd.DataFrame, summary_path: Path):
         summary_path (Path): Path to the (possibly already existing) CSV file.
     """
     summary_path = Path(summary_path)
-    if not summary_path.exists():
-        results_df.to_csv(summary_path, index=False)
-        return
-    existing_cols = list(pd.read_csv(summary_path, nrows=0).columns)
-    if list(results_df.columns) == existing_cols:
-        results_df.to_csv(summary_path, mode="a", header=False, index=False)
-        return
-    print(
-        f"WARNING: Columns of new results differ from existing {summary_path} "
-        "(e.g. some experiments computed SHAP values and others didn't). "
-        "Rewriting the file with the union of columns instead of appending."
-    )
-    existing_df = pd.read_csv(summary_path)
-    merged = pd.concat([existing_df, results_df], ignore_index=True)
-    merged.to_csv(summary_path, index=False)
+    lock_path = summary_path.with_suffix(summary_path.suffix + ".lock")
+    acquire_lock(lock_path)
+    try:
+        if not summary_path.exists():
+            results_df.to_csv(summary_path, index=False)
+            return
+        existing_cols = list(pd.read_csv(summary_path, nrows=0).columns)
+        if list(results_df.columns) == existing_cols:
+            results_df.to_csv(summary_path, mode="a", header=False, index=False)
+            return
+        print(
+            f"WARNING: Columns of new results differ from existing {summary_path} "
+            "(e.g. some experiments computed SHAP values and others didn't). "
+            "Rewriting the file with the union of columns instead of appending."
+        )
+        existing_df = pd.read_csv(summary_path)
+        merged = pd.concat([existing_df, results_df], ignore_index=True)
+        merged.to_csv(summary_path, index=False)
+    finally:
+        release_lock(lock_path)
 
 
 def acquire_lock(lock_path: Path, timeout: float = 30.0, poll: float = 0.1):
