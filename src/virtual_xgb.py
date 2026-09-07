@@ -14,6 +14,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from scipy.stats import spearmanr
 from xgboost import XGBRegressor
 import shap
 import warnings
@@ -37,7 +38,7 @@ sns.set_style("whitegrid")
 CATALYST_ID = "cat_ID"
 TARGET = "C2y"
 DESCRIPTORS = [f"D{i}" for i in range(1, 17)]
-PROCESS_CONDITIONS = ["T", "Q", "CH4_O2", "InertFraction"]
+PROCESS_CONDITIONS = ["T", "Q", "CH4_O2", "AF"]
 ALL_FEATURES = DESCRIPTORS + PROCESS_CONDITIONS
 
 # Fixed experiment parameters
@@ -116,6 +117,53 @@ def train_and_evaluate_xgb(X_train, y_train, X_test, y_test, params, seed):
     }
 
     return results
+
+
+def compute_ranking_performance(y_true, y_pred, cat_ids, top_k=3):
+    """
+    Compute ranking performance metrics: top-k accuracy and Spearman correlation.
+
+    Args:
+        y_true: True target values
+        y_pred: Predicted target values
+        cat_ids: Catalyst IDs corresponding to the samples
+        top_k: Number of top catalysts to consider for accuracy
+
+    Returns:
+        Dictionary with top-k accuracy and Spearman correlation
+    """
+    # Create a DataFrame for easier manipulation
+    df = pd.DataFrame({
+        "cat_id": cat_ids,
+        "y_true": y_true,
+        "y_pred": y_pred
+    })
+
+    # use maximum of y_true and y_pred per catalyst to determine ranking
+    df_agg = df.groupby("cat_id").agg({"y_true": "max", "y_pred": "max"}).reset_index()
+
+    # check if predicted y is constant
+    if df_agg["y_pred"].nunique() == 1:
+        print("WARNING: Predicted values are constant. Spearman correlation is undefined.")
+        spearman_corr = 0.0
+        top_k_accuracy = 0.0
+    else:
+        # Get top-k catalysts based on aggregated true and predicted values
+        top_k_true = df_agg.nlargest(top_k, "y_true", keep="all")["cat_id"].values
+        # use length of ground_truth top_k_true to determine top_k_pred in case of ties
+        top_k_pred = df_agg.nlargest(len(top_k_true), "y_pred")["cat_id"].values
+
+        # Compute top-k accuracy by taking intersection of sets
+        # Use min for cases where there are ties in the top-k selection
+        top_k_accuracy = min(1, len(set(top_k_true) & set(top_k_pred)) / top_k)
+
+        # Compute Spearman correlation
+        spearman_corr, _ = spearmanr(df_agg["y_true"], df_agg["y_pred"])
+
+    return {
+        f"top_{top_k}_accuracy": top_k_accuracy,
+        "spearman_corr": spearman_corr,
+    }
 
 
 def compute_shap_values(model, X_test, feature_cols):
@@ -375,17 +423,20 @@ def main(
     data_path,
     n_train_catalysts,
     seeds,
-    compute_shap=True,
-    plot_performance=True,
+    train_pool_path=None,
+    test_pool_path=None,
+    compute_shap=False,
+    plot_performance=False,
 ):
     """
     Main training function for virtual catalyst dataset.
 
     Args:
         data_path: Path to dataset CSV
-        output_dir: Output directory for results
         n_train_catalysts: Number of training catalysts
         seeds: List of random seeds
+        train_pool_path: Optional path to CSV data set used for the training catalyst pool. The contained catalyst IDs have to be a subset of the catalyst IDs in the main data set (at --data_path). If not provided, all catalysts in the main data set are used as the training pool.
+        test_pool_path: Optional path to CSV data set used for the test catalyst pool. The contained catalyst IDs have to be a subset of the catalyst IDs in the main data set (at --data_path). If not provided, all catalysts in the main data set are used as the test pool.
         compute_shap: Whether to compute SHAP values
         plot_performance: Whether to create performance visualization plots
     """
@@ -407,6 +458,8 @@ def main(
     print(f"  Test catalysts: {N_TEST_CATALYSTS}")
     print(f"  CV folds: {N_CV_FOLDS}")
     print(f"  Seeds: {seeds}")
+    print(f"  Train pool: {train_pool_path if train_pool_path else 'All catalysts in dataset'}")
+    print(f"  Test pool: {test_pool_path if test_pool_path else 'All catalysts in dataset'}")
     print(f"  Compute SHAP: {compute_shap}")
     print(f"  Plot Performance: {plot_performance}")
 
@@ -437,6 +490,28 @@ def main(
         print("\n1. Splitting data...")
         rng = random.Random(seed)
         model_seed = rng.randint(0, 1000000)
+        # Compute train and test pools if provided and verify them
+        all_catalysts = df[CATALYST_ID].unique().tolist()
+        if test_pool_path is not None:
+            test_pool_df = pd.read_csv(test_pool_path)
+            test_pool_catalysts = test_pool_df[CATALYST_ID].unique().tolist()
+            if not set(test_pool_catalysts).issubset(set(all_catalysts)):
+                raise ValueError(
+                    "Test pool catalysts must be a subset of the catalysts in the main dataset."
+                )
+            print(f"  Using test pool of {len(test_pool_catalysts)} catalysts from {test_pool_path}")
+        else:
+            test_pool_catalysts = None
+        if train_pool_path is not None:
+            train_pool_df = pd.read_csv(train_pool_path)
+            train_pool_catalysts = train_pool_df[CATALYST_ID].unique().tolist()
+            if not set(train_pool_catalysts).issubset(set(all_catalysts)):
+                raise ValueError(
+                    "Train pool catalysts must be a subset of the catalysts in the main dataset."
+                )
+            print(f"  Using train pool of {len(train_pool_catalysts)} catalysts from {train_pool_path}")
+        else:
+            train_pool_catalysts = None
         # Data splitting
         (
             X_train,
@@ -459,6 +534,8 @@ def main(
             n_test_catalysts=N_TEST_CATALYSTS,
             return_indices=True,
             catalyst_name_column=CATALYST_ID,
+            train_pool=train_pool_catalysts,
+            test_pool=test_pool_catalysts,
         )
         # get cross-validation masks for training set
         cross_val_masks = get_cross_validation_masks(
@@ -517,10 +594,16 @@ def main(
         best_model_results = train_and_evaluate_xgb(
             X_train_scaled, y_train, X_test_scaled, y_test, best_params, model_seed
         )
+        # Compute ranking performance
+        ranking_performance = compute_ranking_performance(
+            y_test, best_model_results["y_test_pred"], df.loc[test_indices, CATALYST_ID]
+        )
 
         print(f"  ✓ Train R² = {best_model_results['train_r2']:.4f}")
         print(f"  ✓ Test R² = {best_model_results['test_r2']:.4f}")
         print(f"  ✓ Test MAE = {best_model_results['test_mae']:.4f}")
+        for k, v in ranking_performance.items():
+            print(f"  ✓ {k}: {v:.4f}")
 
         # Store results
         result_dict = {
@@ -536,6 +619,7 @@ def main(
             "test_mae": best_model_results["test_mae"],
             "test_rmse": best_model_results["test_rmse"],
             **{f"hp_{k}": v for k, v in best_params.items()},
+            **{f"ranking_{k}": v for k, v in ranking_performance.items()},
         }
 
         # SHAP analysis
@@ -652,6 +736,20 @@ if __name__ == "__main__":
         help="Create performance visualization plots",
     )
 
+    parser.add_argument(
+        "--train_pool_path",
+        type=str,
+        default=None,
+        help="Optional path to CSV data set used for the training catalyst pool. The contained catalyst IDs have to be a subset of the catalyst IDs in the main data set (at --data_path). If not provided, all catalysts in the main data set are used as the training pool.",
+    )
+
+    parser.add_argument(
+        "--test_pool_path",
+        type=str,
+        default=None,
+        help="Optional path to CSV data set used for the test catalyst pool. The contained catalyst IDs have to be a subset of the catalyst IDs in the main data set (at --data_path). If not provided, all catalysts in the main data set are used as the test pool.",
+    )
+
     args = parser.parse_args()
 
     main(
@@ -660,4 +758,6 @@ if __name__ == "__main__":
         seeds=args.seeds,
         compute_shap=args.compute_shap,
         plot_performance=args.plot_performance,
+        train_pool_path=args.train_pool_path,
+        test_pool_path=args.test_pool_path,
     )

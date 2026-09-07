@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import shap
+from scipy.stats import spearmanr
 
 from utils import (
     BASE_PROCESS,
@@ -16,10 +18,14 @@ from utils import (
     CONDITIONS_TEMP_SINGLE,
     CONDITIONS_TEMP_PAIRS,
     CONDITIONS_CH4_O2_RATIO,
+    get_invariant_embedding,
+    get_one_hot_encoding,
     get_cross_validation_param_sets,
     scale_data,
     split_data,
     augment_data,
+    scatter_mean,
+    save_results_csv,
     get_cross_validation_masks,
     settings_to_filename_map,
 )
@@ -51,17 +57,21 @@ def train_xgboost(
         y_val = None
 
     # Data augmentation (permutations of M1, M2, M3 related features)
+    test_group_ids = None
     if augment_data_flag:
-        X_train, y_train, X_val, y_val, X_test, y_test, cross_val_masks = augment_data(
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            X_test,
-            y_test,
-            feature_cols,
-            other_lists=cross_val_masks,
+        X_train, y_train, X_val, y_val, X_test, y_test, cross_val_masks, group_ids = (
+            augment_data(
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                X_test,
+                y_test,
+                feature_cols,
+                other_lists=cross_val_masks,
+            )
         )
+        test_group_ids = group_ids[2]
 
     # Scaling
     X_train, X_val, X_test, scaler = scale_data(
@@ -113,38 +123,26 @@ def train_xgboost(
 
     # evaluate on test set
     preds = model.predict(X_test)
-    test_mse = float(np.mean((preds - y_test) ** 2))
-    test_mae = float(np.mean(np.abs(preds - y_test)))
-    test_rmse = float(np.sqrt(test_mse))
-    ss_res = np.sum((preds - y_test) ** 2)
-    ss_tot = np.sum((y_test - np.mean(y_test)) ** 2)
-    test_r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
-
-    print(f"Test R2: {test_r2:.4f}")
-    print(f"Test MSE: {test_mse:.4f}, MAE: {test_mae:.4f}, RMSE: {test_rmse:.4f}")
+    if test_group_ids is not None:
+        # collapse augmented copies back to one prediction per original row,
+        # so downstream evaluation code doesn't need to know about augmentation
+        preds = scatter_mean(preds, test_group_ids)
+        _, first_idx = np.unique(test_group_ids, return_index=True)
+        y_test = y_test[first_idx]
 
     results = {
         "model": model,
         "scaler": scaler,
         "feature_cols": feature_cols,
         "history": [],
-        "test_metrics": {
-            "mse": test_mse,
-            "mae": test_mae,
-            "rmse": test_rmse,
-            "r2": test_r2,
-        },
         "preds_test": preds,
         "y_test": y_test,
+        "X_test": X_test,
     }
     return results
 
 
-def plot_test_results(ax, y_true, y_pred, accumulate_permutations=False):
-    if accumulate_permutations:
-        # average predictions over permutations
-        y_pred = y_pred.reshape(-1, 6).mean(axis=1)
-        y_true = y_true[::6]
+def plot_test_results(ax, y_true, y_pred):
     # compute R2, MAE, RMSE
     r2 = 1.0 - np.sum((y_pred - y_true) ** 2) / np.sum((y_true - np.mean(y_true)) ** 2)
     mae = np.mean(np.abs(y_pred - y_true))
@@ -173,6 +171,72 @@ def plot_test_results(ax, y_true, y_pred, accumulate_permutations=False):
     return r2, mae, mse, np.abs(y_pred - y_true)
 
 
+def compute_ranking_performance(test_df, target_col, y_pred, top_k=3):
+    """
+    Compute ranking performance metrics: top-k accuracy and Spearman correlation.
+
+    Args:
+        test_df: DataFrame containing true target values and catalys IDs
+        target_col: Name of the column containing true target values
+        y_pred: Predicted target values
+        top_k: Number of top catalysts to consider for accuracy
+
+    Returns:
+        Dictionary with top-k accuracy and Spearman correlation
+    """
+    test_df["y_pred"] = y_pred
+    # use maximum of y_true and y_pred per catalyst to determine ranking
+    df_agg = test_df.groupby("Name").agg({target_col: "max", "y_pred": "max"}).reset_index()
+
+    # check if predicted y is constant
+    if df_agg["y_pred"].nunique() == 1:
+        print("WARNING: Predicted values are constant. Spearman correlation is undefined.")
+        spearman_corr = 0.0
+        top_k_accuracy = 0.0
+    else:
+        # Get top-k catalysts based on aggregated true and predicted values
+        top_k_true = df_agg.nlargest(top_k, target_col, keep="all")["Name"].values
+        # use length of ground_truth top_k_true to determine top_k_pred in case of ties
+        top_k_pred = df_agg.nlargest(len(top_k_true), "y_pred")["Name"].values
+
+        # Compute top-k accuracy by taking intersection of sets
+        # Use min for cases where there are ties in the top-k selection
+        top_k_accuracy = min(1, len(set(top_k_true) & set(top_k_pred)) / top_k)
+
+        # Compute Spearman correlation
+        spearman_corr, _ = spearmanr(df_agg[target_col], df_agg["y_pred"])
+
+    return {
+        f"top_{top_k}_accuracy": top_k_accuracy,
+        "spearman_corr": spearman_corr,
+    }
+
+
+def compute_shap_values(model, X_test, feature_cols):
+    """
+    Compute mean absolute SHAP values per feature for a trained model, using
+    the same computation as ocm_xgb_compute_shap.py so that results from both
+    scripts are directly comparable.
+
+    Args:
+        model: Trained XGBoost model.
+        X_test: Test features the model was evaluated on (post augmentation
+            and scaling).
+        feature_cols: List of feature column names, in the same order as the
+            columns of X_test.
+
+    Returns:
+        dict: Mapping "shap_<feature_col>" -> mean absolute SHAP value.
+    """
+    expl = shap.TreeExplainer(model)
+    sv = expl(X_test, check_additivity=False)
+    values = sv.values if hasattr(sv, "values") else sv  # compatibility
+    mean_abs_shap = np.mean(np.abs(values), axis=0)
+    return {
+        f"shap_{col}": val for col, val in zip(feature_cols, mean_abs_shap)
+    }
+
+
 def main(
     data_path,
     seeds,
@@ -187,6 +251,7 @@ def main(
     augmentations=[True, False],
     store_plots=False,
     store_models=False,
+    compute_shap=False,
 ):
     # read data
     df = pd.read_csv(data_path)
@@ -249,6 +314,7 @@ def main(
                 f"random_{cross_val_params}", seed=seed
             )
             for j, feature_set in enumerate(feature_sets):
+                _df = df
                 # run experiments per feature set
                 if feature_set == "base+descriptors":
                     feature_cols = BASE_PROCESS + DESCRIPTORS
@@ -256,6 +322,14 @@ def main(
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
                 elif feature_set == "all":  # all features
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
+                elif feature_set in ["one_hot", "invariant"]:
+                    feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
+                    _df = df[feature_cols + ["C2y", "Name"]]
+                    if feature_set == "one_hot":
+                        _df = get_one_hot_encoding(_df)
+                    elif feature_set == "invariant":
+                        _df = get_invariant_embedding(_df)
+                    feature_cols = [col for col in _df.columns if col not in ["C2y", "Name"]]
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -277,7 +351,7 @@ def main(
                     val_indices,
                     test_indices,
                 ) = split_data(
-                    df,
+                    _df,
                     feature_cols,
                     target_col,
                     split_strategy,
@@ -290,7 +364,7 @@ def main(
                 )
                 # get cross-validation masks for training set if needed
                 cross_val_masks = get_cross_validation_masks(
-                    df,
+                    _df,
                     train_indices,
                     split_strategy,
                     rng=rng,
@@ -299,6 +373,13 @@ def main(
                 )
 
                 for k, augm in enumerate(augmentations):
+                    # check if augmentation is applicable
+                    if feature_set == "invariant" and augm:
+                        print(
+                            "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
+                        )
+                        continue
+
                     # Train xgboost model
                     print(f"Training XGBoost model for feature set: {feature_set}...")
                     print(
@@ -320,16 +401,42 @@ def main(
                     )
                     elapsed_time = time() - start_time
                     print(f"Training completed in {elapsed_time:.2f} seconds.")
+                    # compute metrics
                     r2, mae, mse, absolute_errors = plot_test_results(
                         ax=axes[i, j * len(augmentations) + k],
                         y_true=xgb_results["y_test"],
                         y_pred=xgb_results["preds_test"],
-                        accumulate_permutations=augm,
                     )
-                    # compute MAE per catalyst and store in results
-                    test_df = df.iloc[test_indices].reset_index(drop=True)
+                    # compute per-catalyst MAE and max true/predicted yield
+                    test_df = _df.iloc[test_indices].reset_index(drop=True)
                     test_df["absolute_error"] = absolute_errors
-                    mae_by_catalyst = test_df.groupby("Name")["absolute_error"].mean()
+                    test_df["y_pred"] = xgb_results["preds_test"]
+                    catalyst_stats = test_df.groupby("Name").agg(
+                        absolute_error=("absolute_error", "mean"),
+                        true_yield_max=(target_col, "max"),
+                        pred_yield_max=("y_pred", "max"),
+                    )
+                    mae_by_catalyst = catalyst_stats["absolute_error"]
+                    true_yield_max_by_catalyst = catalyst_stats["true_yield_max"]
+                    pred_yield_max_by_catalyst = catalyst_stats["pred_yield_max"]
+                    # compute ranking performance
+                    ranking_performance = compute_ranking_performance(
+                        test_df, target_col, xgb_results["preds_test"], top_k=3
+                    )
+                    # print results for this experiment
+                    print(f"Test R2: {r2:.4f}")
+                    print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {np.sqrt(mse):.4f}")
+                    for k, v in ranking_performance.items():
+                        print(f"{k}: {v:.4f}")
+                    # compute SHAP values
+                    shap_cols = {}
+                    if compute_shap:
+                        shap_cols = compute_shap_values(
+                            xgb_results["model"],
+                            xgb_results["X_test"],
+                            feature_cols,
+                        )
+                    # store results for this experiment
                     results_rows.append(
                         {
                             "model_type": "xgboost",
@@ -346,20 +453,31 @@ def main(
                             # merged per-catalyst entries
                             **{
                                 f"test_catalyst_{i}": name
-                                for i, name in enumerate(mae_by_catalyst.index)
+                                for i, name in enumerate(catalyst_stats.index)
                             },
                             **{
                                 f"mae_test_catalyst_{i}": mae_val
                                 for i, mae_val in enumerate(mae_by_catalyst)
                             },
+                            **{
+                                f"true_yield_max_test_catalyst_{i}": val
+                                for i, val in enumerate(true_yield_max_by_catalyst)
+                            },
+                            **{
+                                f"pred_yield_max_test_catalyst_{i}": val
+                                for i, val in enumerate(pred_yield_max_by_catalyst)
+                            },
                             "training_time": elapsed_time,
+                            **{f"ranking_{k}": v for k, v in ranking_performance.items()},
+                            **shap_cols,
                         }
                     )
                     # collect model and splits
-                    model_id = (
-                        f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
-                    )
-                    _collected_models[model_id] = xgb_results["model"]
+                    if store_models:
+                        model_id = (
+                            f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
+                        )
+                        _collected_models[model_id] = xgb_results["model"]
                     if seed not in _collected_splits:
                         _collected_splits[seed] = {
                             "train_indices": train_indices,
@@ -375,14 +493,11 @@ def main(
             )
     # save results dataframe to csv
     results_df = pd.DataFrame(results_rows)
-    summary_path = results_path / "results_summary.csv"
-    if summary_path.exists():
-        results_df.to_csv(summary_path, mode="a", header=False, index=False)
-    else:
-        results_df.to_csv(summary_path, index=False)
-    # save models to disk
-    models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
+    summary_path = results_path / "training_results.csv"
+    save_results_csv(results_df, summary_path)
     if store_models:
+        # save models to disk
+        models_path = results_path / f"xgb_models_{seeds[0]}-{seeds[-1]}.joblib"
         dump(collected_models, models_path)
     # save data splits to disk
     splits_path = results_path / f"data_splits_{seeds[0]}-{seeds[-1]}.joblib"
@@ -449,7 +564,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (default: all three sets)",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant') (default: all but 'one_hot' and 'invariant') ",
     )
     parser.add_argument(
         "--augmentations",
@@ -467,6 +582,12 @@ if __name__ == "__main__":
         "--store_models",
         action="store_true",
         help="Whether to store the models (default: False)",
+    )
+    parser.add_argument(
+        "--compute_shap",
+        action="store_true",
+        help="Whether to compute SHAP values for each trained model directly "
+        "after training (default: False)",
     )
 
     def parse_seeds(tokens):
@@ -530,4 +651,5 @@ if __name__ == "__main__":
         augmentations=augmentations,
         store_plots=args.store_plots,
         store_models=args.store_models,
+        compute_shap=args.compute_shap,
     )
