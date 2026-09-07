@@ -32,7 +32,7 @@ src/*.png
 src/*.csv
 
 # hidden folders with additional results
-*/.additional*
+**/.additional*
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 .DS_Store
