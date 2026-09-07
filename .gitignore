@@ -31,6 +31,9 @@ src/virtual_cat/*.csv
 src/*.png
 src/*.csv
 
+# hidden folders with additional results
+*/.additional*
+
 # ── macOS ─────────────────────────────────────────────────────────────────────
 .DS_Store
 .AppleDouble
