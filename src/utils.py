@@ -120,6 +120,9 @@ settings_to_filename_map = {
     ("base+atom_numbers+support", True): "na",
     ("all", False): "a",
     ("all", True): "aa",
+    ("one_hot", False): "oh",
+    ("one_hot", True): "oha",
+    ("invariant", False): "inv",
     ("unique", True): "aa+u",
     ("non_unique", True): "aa+nu",
     ("threshold", True): "aa+thresh",
@@ -163,7 +166,7 @@ def get_cross_validation_param_sets(param_set_name: str, seed: int = 42):
 
 def get_results_csv(experiment_path: Path) -> pd.DataFrame:
     if experiment_path.exists() and experiment_path.is_dir():
-        result_file = experiment_path / "results_summary.csv"
+        result_file = experiment_path / "training_results.csv"
         if result_file.exists():
             df_res = pd.read_csv(result_file)
             return [df_res]
@@ -174,6 +177,47 @@ def get_results_csv(experiment_path: Path) -> pd.DataFrame:
             return results
     else:
         return []
+
+
+def save_results_csv(results_df: pd.DataFrame, summary_path: Path):
+    """Write/append results_df to summary_path as CSV, without ever producing
+    a file with an inconsistent column count across rows.
+
+    If summary_path doesn't exist yet, it is created normally. If it exists
+    and results_df has the exact same columns (e.g. repeated runs with the
+    same settings), the new rows are appended cheaply. If the columns differ
+    (e.g. one run computed SHAP values and another didn't, so one has extra
+    shap_* columns), appending with a mismatched header would silently
+    produce a CSV that later fails to parse -- instead, the existing file is
+    read back in, merged with results_df on the union of columns (missing
+    values filled with NaN, same as pd.concat), and rewritten with a single
+    consistent header.
+
+    Args:
+        results_df (pd.DataFrame): New results to store.
+        summary_path (Path): Path to the (possibly already existing) CSV file.
+    """
+    summary_path = Path(summary_path)
+    lock_path = summary_path.with_suffix(summary_path.suffix + ".lock")
+    acquire_lock(lock_path)
+    try:
+        if not summary_path.exists():
+            results_df.to_csv(summary_path, index=False)
+            return
+        existing_cols = list(pd.read_csv(summary_path, nrows=0).columns)
+        if list(results_df.columns) == existing_cols:
+            results_df.to_csv(summary_path, mode="a", header=False, index=False)
+            return
+        print(
+            f"WARNING: Columns of new results differ from existing {summary_path} "
+            "(e.g. some experiments computed SHAP values and others didn't). "
+            "Rewriting the file with the union of columns instead of appending."
+        )
+        existing_df = pd.read_csv(summary_path)
+        merged = pd.concat([existing_df, results_df], ignore_index=True)
+        merged.to_csv(summary_path, index=False)
+    finally:
+        release_lock(lock_path)
 
 
 def acquire_lock(lock_path: Path, timeout: float = 30.0, poll: float = 0.1):
@@ -199,6 +243,71 @@ def release_lock(lock_path: Path):
     except FileNotFoundError:
         pass
 
+
+def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
+    """Get one-hot encoding for specified columns in a DataFrame.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        column_names (list): List of column names to one-hot encode (default: ATOM_NUMBERS + SUPPORT).
+
+    Returns:
+        pd.DataFrame: A new DataFrame with one-hot encoded columns that also contains
+            all columns not in column_names in the same format as before.
+    """
+    return pd.get_dummies(df, columns=column_names, drop_first=False)
+
+
+def get_invariant_embedding(df):
+    """Get invariant embedding for the elements and support columns in a DataFrame.
+        The invariant embedding is obtained by having one feature per element and support.
+        The support is one-hot encoded, whereas the elements are indicated with their 
+        corresponding concentration.
+        For example, if the input DataFrame has elements 1,...,5 and supports A, B, C,
+        and a data point has support B and elements M1=3, M2=5, and M3=1 with 
+        concentrations 0.2, 0.5, and 0.3, respectively, the invariant embedding for this
+        data point will be [0.3, 0, 0.2, 0, 0.5, 0, 1, 0].
+
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+
+    Returns:
+        pd.DataFrame: A new DataFrame with invariant embeddings for elements and support.
+    """
+    # Get unique elements and supports
+    unique_elements = sorted(set(df[ATOM_NUMBERS[0]].unique()).union(
+        df[ATOM_NUMBERS[1]].unique()).union(df[ATOM_NUMBERS[2]].unique())
+    )
+    unique_supports = sorted(df[SUPPORT[0]].unique())
+    element_cols = [f"element_{str(e)}" for e in unique_elements]
+    support_cols = [f"support_{str(s)}" for s in unique_supports]
+    # Initialize the invariant embedding DataFrame
+    invariant_df = pd.DataFrame(
+        0,
+        index=df.index,
+        columns=element_cols + support_cols,
+        dtype=float,
+    )
+
+    # Fill in the element concentrations
+    for i, atom_col in enumerate(ATOM_NUMBERS):
+        for element, name in zip(unique_elements, element_cols):
+            mask = df[atom_col] == element
+            invariant_df.loc[mask, name] = df.loc[mask, f"M{i+1}_mol%"]/100  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
+
+    # Fill in the one-hot encoded supports
+    for support, name in zip(unique_supports, support_cols):
+        invariant_df.loc[df[SUPPORT[0]] == support, name] = 1
+
+    # Cast one-hot support columns to integer dtype (keeps element columns as float)
+    invariant_df[support_cols] = invariant_df[support_cols].astype("int64")
+
+    # Prepend all columns not in ATOM_NUMBERS + SUPPORT and ["M1_mol%", "M2_mol%", "M3_mol%"] to the invariant_df
+    other_cols = [col for col in df.columns if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]]
+    invariant_df = pd.concat([df[other_cols], invariant_df], axis=1)
+
+    return invariant_df
 
 def get_cross_validation_masks(
     df,
@@ -311,6 +420,8 @@ def split_data(
     return_indices=False,
     conditions={},
     catalyst_name_column="Name",
+    train_pool=None,
+    test_pool=None,
 ):
     """
     Splits the data into training, validation, and test sets based on the specified strategy.
@@ -332,6 +443,8 @@ def split_data(
         return_indices (bool): Whether to return the indices of the splits.
         conditions (dict): Conditions for filtering the data before splitting. Only used with 'catalyst' split strategy.
         catalyst_name_column (str): The name of the column containing catalyst names in df.
+        train_pool (list): Optional list of catalyst names to use as a pool for drawing training catalysts. Only implemented for split_strategy='catalyst' with conditions={}.
+        test_pool (list): Optional list of catalyst names to use as a pool for drawing test catalysts. Only implemented for split_strategy='catalyst' with conditions={}.
 
     Returns:
         tuple: A tuple containing the training, validation, and test sets (X_train, y_train, X_val, y_val, X_test, y_test).
@@ -367,8 +480,18 @@ def split_data(
         # sample test catalysts and train catalysts (train includes val for now)
         if len(conditions) == 0:
             # no conditions provided, split according to catalyst names only
-            test_catalysts = rng.sample(list(all_catalysts), n_test_catalysts)
-            remaining_catalysts = [c for c in all_catalysts if c not in test_catalysts]
+            if train_pool is None:
+                train_pool = all_catalysts
+            if test_pool is None:
+                test_pool = all_catalysts
+            assert len(test_pool) >= n_test_catalysts, \
+                f"Not enough catalysts in test_pool ({len(test_pool)}) for the " \
+                f"requested split size ({n_test_catalysts})."
+            test_catalysts = rng.sample(list(test_pool), n_test_catalysts)
+            remaining_catalysts = [c for c in train_pool if c not in test_catalysts]
+            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, \
+                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "\
+                f"the requested split size ({n_train_catalysts + n_val_catalysts})."
             train_catalysts = rng.sample(
                 remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
             )
@@ -385,7 +508,7 @@ def split_data(
             # the test set will only consist of filtered data points from
             # n_test_catalysts catalysts in the train set at the target condition
             all_shuffled = rng.sample(list(all_catalysts), len(all_catalysts))
-            train_catalysts = all_shuffled[:n_train_catalysts + n_val_catalysts]
+            train_catalysts = all_shuffled[: n_train_catalysts + n_val_catalysts]
             train_indices, _ = generate_splits(
                 df,
                 train_catalyst_names=all_shuffled,
@@ -395,7 +518,7 @@ def split_data(
                 catalyst_name_column=catalyst_name_column,
             )
             if n_test_catalysts > 0:
-                test_catalysts = all_shuffled[-n_test_catalysts :]
+                test_catalysts = all_shuffled[-n_test_catalysts:]
                 _, test_indices = generate_splits(
                     df,
                     train_catalyst_names=test_catalysts,
@@ -506,6 +629,40 @@ def split_data(
         return X_train, y_train, X_val, y_val, X_test, y_test
 
 
+def find_site_permutation_groups(feature_cols, site_prefixes=("M1_", "M2_", "M3_")):
+    """Auto-detect column groups that belong to the same metal site and thus need
+    to be permuted together when relabeling the sites (e.g. M1 <-> M2).
+
+    A group is any set of columns that share a common suffix after one of the
+    site prefixes, e.g. "M1_mol%", "M2_mol%", "M3_mol%" share the suffix "mol%".
+    Only suffixes for which *all* site prefixes are present in feature_cols are
+    returned.
+
+    Args:
+        feature_cols (list): List of feature column names.
+        site_prefixes (tuple): Column name prefixes identifying each site, in
+            the order sites should be permuted (default: M1_, M2_, M3_).
+
+    Returns:
+        tuple: Tuple of tuples of column names, one tuple per detected group,
+            ordered like site_prefixes (e.g. (M1_x, M2_x, M3_x)).
+    """
+    feature_set = set(feature_cols)
+    groups = []
+    seen_suffixes = set()
+    for col in feature_cols:
+        if not col.startswith(site_prefixes[0]):
+            continue
+        suffix = col[len(site_prefixes[0]):]
+        if suffix in seen_suffixes:
+            continue
+        seen_suffixes.add(suffix)
+        group = tuple(f"{prefix}{suffix}" for prefix in site_prefixes)
+        if all(c in feature_set for c in group):
+            groups.append(group)
+    return tuple(groups)
+
+
 def augment_data(
     X_train,
     y_train,
@@ -514,18 +671,19 @@ def augment_data(
     X_test,
     y_test,
     feature_cols,
-    permutation_cols=(
-        ("M1_atom_number", "M2_atom_number", "M3_atom_number"),
-        ("M1_mol%", "M2_mol%", "M3_mol%"),
-        ("M1_electronegativity", "M2_electronegativity", "M3_electronegativity"),
-        ("M1_inverse_ionization", "M2_inverse_ionization", "M3_inverse_ionization"),
-        ("M1_d_electron_count", "M2_d_electron_count", "M3_d_electron_count"),
-        ("M1_ionic_radius", "M2_ionic_radius", "M3_ionic_radius"),
-        ("M1_oxidation_state", "M2_oxidation_state", "M3_oxidation_state"),
-    ),
+    permutation_cols=None,
     other_lists=None,
 ):
     """
+    Augment data by relabeling the metal sites (M1, M2, M3) in all possible ways.
+    A data point can have one or more empty metal sites (e.g. a two-metal or
+    single-metal catalyst, encoded as all-zero values across the permuted
+    columns for that site). Relabelings that only swap sites that are identical
+    for a given row (most commonly two or three empty sites) would reproduce a
+    row that is already present, so those are not added -- each row gets one
+    augmented copy per *distinct* site assignment (1, 3, or 6 depending on how
+    many sites are actually distinguishable for that row).
+
     Parameters:
     - X_train: Training data features
     - y_train: Training data targets
@@ -535,47 +693,114 @@ def augment_data(
     - y_test: Test data targets (can be None only if X_test is None)
     - feature_cols: List of feature column names
     - permutation_cols: Tuple of tuples of three column names to permute in all
-        possible combinations (i.e. each input will have 6 permutations added).
-        The entries in the tuples must be ordered identically in all tuples (e.g.
-        all features belonging to M1 at the first position, M2 at the second and
-        M3 at the third, like:
+        possible combinations. The entries in the tuples must be ordered
+        identically in all tuples (e.g. all features belonging to M1 at the
+        first position, M2 at the second and M3 at the third, like:
         (("M1_atom_number", "M2_atom_number", "M3_atom_number"),
          ("M1_electronegativity", "M2_electronegativity", "M3_electronegativity")).
+        If None (default), these groups are auto-detected from feature_cols via
+        find_site_permutation_groups.
     - other_lists: Other arrays with shape like y_train that need to be repeated
         (e.g. masks for indexing the training set).
+
+    Returns:
+        tuple: (X_train, y_train, X_val, y_val, X_test, y_test, repeated_lists,
+            group_ids). Since each row can now expand into a different number
+            of augmented copies (1, 3, or 6), group_ids is a 3-tuple
+            (train_group_ids, val_group_ids, test_group_ids) -- one int array
+            per split (None if the corresponding X was None), each the same
+            length as the augmented split and giving the index of the original
+            (pre-augmentation) row each augmented row came from. Use these
+            together with scatter_mean to aggregate e.g. predictions made on
+            the augmented data back to one value per original row.
     """
-    # Augment data by adding all permutations of the specified columns
     assert (
         len(feature_cols) == X_train.shape[1]
     ), "Number of feature_cols must match number of columns in X_train"
     n_features = len(feature_cols)
-    all_permutations = np.array(list(permutations([0, 1, 2])))
-    all_indices = np.arange(n_features)[None, :].repeat(6, 0)
-    for permutation_triple in permutation_cols:
-        f1, f2, f3 = permutation_triple
-        if f1 in feature_cols and f2 in feature_cols and f3 in feature_cols:
-            idx1 = feature_cols.index(f1)
-            idx2 = feature_cols.index(f2)
-            idx3 = feature_cols.index(f3)
-            all_indices[:, [idx1, idx2, idx3]] = all_indices[0, [idx1, idx2, idx3]][
-                all_permutations
-            ]
 
-    X_train = X_train[:, all_indices].reshape(-1, n_features)
-    y_train = y_train.repeat(6)
-    if X_val is not None:
-        X_val = X_val[:, all_indices].reshape(-1, n_features)
-        y_val = y_val.repeat(6)
-    if X_test is not None:
-        X_test = X_test[:, all_indices].reshape(-1, n_features)
-        y_test = y_test.repeat(6)
-    if other_lists is not None:
-        repeated_lists = []
-        for arr in other_lists:
-            repeated_lists.append(arr.repeat(6))
-    else:
-        repeated_lists = None
-    return X_train, y_train, X_val, y_val, X_test, y_test, repeated_lists
+    if permutation_cols is None:
+        permutation_cols = find_site_permutation_groups(feature_cols)
+
+    all_permutations = np.array(list(permutations([0, 1, 2])))
+    n_perms = len(all_permutations)
+    all_indices = np.arange(n_features)[None, :].repeat(n_perms, 0)
+    group_col_indices = [
+        [feature_cols.index(c) for c in group] for group in permutation_cols
+    ]
+    for idx1, idx2, idx3 in group_col_indices:
+        all_indices[:, [idx1, idx2, idx3]] = all_indices[0, [idx1, idx2, idx3]][
+            all_permutations
+        ]
+    # columns whose values determine whether two site-relabelings of a row are
+    # actually distinct (i.e. all M1/M2/M3-site columns being permuted)
+    relevant_cols = np.array(group_col_indices).reshape(-1)
+
+    def _augment(X, y, extra=None):
+        if X is None:
+            return None, None, None, None
+        n = X.shape[0]
+        variants = X[:, all_indices]  # shape (n, n_perms, n_features)
+        if len(relevant_cols) > 0:
+            relevant = variants[:, :, relevant_cols]  # (n, n_perms, n_relevant)
+            # mark, for each row, permutations that reproduce an earlier one
+            duplicate = np.zeros((n, n_perms), dtype=bool)
+            for a in range(n_perms):
+                for b in range(a + 1, n_perms):
+                    duplicate[:, b] |= np.all(
+                        relevant[:, a, :] == relevant[:, b, :], axis=1
+                    )
+            keep_mask = ~duplicate
+        else:
+            # nothing to permute: only the (unmodified) identity variant is kept
+            keep_mask = np.zeros((n, n_perms), dtype=bool)
+            keep_mask[:, 0] = True
+        flat_keep = keep_mask.reshape(-1)
+        X_aug = variants.reshape(-1, n_features)[flat_keep]
+        y_aug = np.repeat(y, n_perms)[flat_keep]
+        # index of the original (pre-augmentation) row each augmented row came
+        # from -- use with scatter_mean to aggregate back per original row
+        group_ids = np.repeat(np.arange(n), n_perms)[flat_keep]
+        extra_aug = None
+        if extra is not None:
+            extra_aug = [np.repeat(arr, n_perms)[flat_keep] for arr in extra]
+        return X_aug, y_aug, extra_aug, group_ids
+
+    X_train, y_train, repeated_lists, train_group_ids = _augment(
+        X_train, y_train, other_lists
+    )
+    X_val, y_val, _, val_group_ids = _augment(X_val, y_val)
+    X_test, y_test, _, test_group_ids = _augment(X_test, y_test)
+    group_ids = (train_group_ids, val_group_ids, test_group_ids)
+    return X_train, y_train, X_val, y_val, X_test, y_test, repeated_lists, group_ids
+
+
+def scatter_mean(values, group_ids, n_groups=None):
+    """Aggregate values by averaging entries that share the same group id.
+
+    Intended to collapse predictions (or other per-row arrays) computed on
+    data produced by augment_data back to one value per original row, since
+    the number of augmented copies can now differ per row (see augment_data).
+
+    Args:
+        values (np.ndarray): 1D array of per-augmented-row values.
+        group_ids (np.ndarray): 1D int array, same length as `values`, giving
+            the original row index each entry belongs to (as returned by
+            augment_data).
+        n_groups (int, optional): Number of groups. Defaults to
+            group_ids.max() + 1.
+
+    Returns:
+        np.ndarray: 1D array of length n_groups with the mean of `values` per
+            group, ordered by group id (i.e. in the original row order).
+    """
+    values = np.asarray(values)
+    group_ids = np.asarray(group_ids)
+    if n_groups is None:
+        n_groups = int(group_ids.max()) + 1
+    sums = np.bincount(group_ids, weights=values, minlength=n_groups)
+    counts = np.bincount(group_ids, minlength=n_groups)
+    return sums / counts
 
 
 def scale_data(

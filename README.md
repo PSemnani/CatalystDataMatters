@@ -49,7 +49,7 @@ python src/ocm_xgb.py \
   --cross_val_params 50 \
   --conditions None \
   --feature_sets base+descriptors \
-  --augmentations yes \
+  --augmentations yes
 ```
 
 Notes:
@@ -74,7 +74,7 @@ Example:
 
 ```bash
 python src/virtual_xgb.py \
-  --data_path Dataset/virtual_catalyst_datasets/Top59.csv \
+  --data_path Dataset/virtual_catalyst_datasets/top59.csv \
   --n_train_catalysts 49 \
   --seeds 1 2 3 4 5
 ```
@@ -82,8 +82,9 @@ python src/virtual_xgb.py \
 Notes:
 
 - `--data_path` and `--n_train_catalysts` are required.
-- The path to the `Full` dataset as well as the filtered versions `AnyActive`, `MostlyActive`, and `Top59` can be provided via `--data_path` (see `Dataset/virtual_catalyst_datasets`).
+- The full virtual catalyst dataset (`full.csv`) as well as the filtered versions `top59.csv` and `top160.csv` (the 59 resp. 160 catalysts with the highest mean yield) can be provided via `--data_path` (see `Dataset/virtual_catalyst_datasets`).
 - The script uses catalyst-based splitting with 5-fold cross-validation with 50 randomly sampled hyper-parameter combinations internally and a fixed test size of 10 catalysts.
+- `--test_pool_path` optionally restricts the catalysts drawn for the test pool to those found in another CSV's catalyst ID column (must be a subset of the catalysts in `--data_path`). If omitted, the full dataset at `--data_path` is used as the test pool. For example, `--data_path Dataset/virtual_catalyst_datasets/full.csv --test_pool_path Dataset/virtual_catalyst_datasets/top59.csv` trains on the full dataset but tests only on catalysts with high mean yield.
 - Outputs are written under the repository root to a run folder such as `virtual_xgb_random_50/<n_train_catalysts>/`.
 
 ## Reproducing paper plots
@@ -150,7 +151,7 @@ python src/ocm_nn.py \
   --n_test_catalysts 10 \
   --val_params 25 \
   --feature_sets base+descriptors \
-  --augmentations yes \
+  --augmentations yes
 ```
 
 It only takes a single `--seed` (default: 1) and requires the number of validation catalysts `--n_val_catalysts` used during training (for adapting the learning rate, selecting the best model etc.). The script uses catalyst-based splitting and trains `--val_params` models, selecting the one with lowest validation loss for evaluation on the test set.
