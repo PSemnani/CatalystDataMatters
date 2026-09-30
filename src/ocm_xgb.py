@@ -20,6 +20,7 @@ from utils import (
     CONDITIONS_CH4_O2_RATIO,
     get_invariant_embedding,
     get_one_hot_encoding,
+    get_composition_descriptors,
     get_cross_validation_param_sets,
     scale_data,
     split_data,
@@ -334,6 +335,14 @@ def main(
                     feature_cols = [
                         col for col in _df.columns if col not in ["C2y", "Name"]
                     ]
+                elif feature_set == "composition_descriptors":
+                    feature_cols = BASE_PROCESS + DESCRIPTORS
+                    _df = df[feature_cols + ["C2y", "Name"]]
+                    _df = get_composition_descriptors(_df)
+                    feature_cols = [
+                        col for col in _df.columns if col not in ["C2y", "Name"]
+                    ]
+
                 elif feature_set == "xenonpy":
                     xp_cols = [col for col in _df.columns if col.startswith("xp_")]
                     if len(xp_cols) == 0:
@@ -341,9 +350,11 @@ def main(
                             "No XenonPy columns (xp_*) found. Wrong --data_path?"
                         )
                     else:
-                        feature_cols = [
-                            col for col in BASE_PROCESS if not col.endswith("_mol%")
-                        ] + ["support_surface_area"] + xp_cols
+                        feature_cols = (
+                            [col for col in BASE_PROCESS if not col.endswith("_mol%")]
+                            + ["support_surface_area"]
+                            + xp_cols
+                        )
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -388,9 +399,13 @@ def main(
 
                 for k, augm in enumerate(augmentations):
                     # check if augmentation is applicable
-                    if feature_set == "invariant" and augm:
+                    if (
+                        feature_set
+                        in ["invariant", "xenonpy", "composition_descriptors"]
+                        and augm
+                    ):
                         print(
-                            "WARNING: Data augmentation is not applicable for invariant embedding. Ignoring augmentation."
+                            f"WARNING: Data augmentation is not applicable for feature set `{feature_set}`. Ignoring augmentation."
                         )
                         continue
 
@@ -581,7 +596,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant') (default: all but 'one_hot' and 'invariant') ",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
     )
     parser.add_argument(
         "--augmentations",

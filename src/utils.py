@@ -124,6 +124,7 @@ settings_to_filename_map = {
     ("one_hot", True): "oha",
     ("invariant", False): "inv",
     ("xenonpy", False): "xp",
+    ("composition_descriptors", False): "cd",
     ("unique", True): "aa+u",
     ("non_unique", True): "aa+nu",
     ("threshold", True): "aa+thresh",
@@ -262,10 +263,10 @@ def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
 def get_invariant_embedding(df):
     """Get invariant embedding for the elements and support columns in a DataFrame.
         The invariant embedding is obtained by having one feature per element and support.
-        The support is one-hot encoded, whereas the elements are indicated with their 
+        The support is one-hot encoded, whereas the elements are indicated with their
         corresponding concentration.
         For example, if the input DataFrame has elements 1,...,5 and supports A, B, C,
-        and a data point has support B and elements M1=3, M2=5, and M3=1 with 
+        and a data point has support B and elements M1=3, M2=5, and M3=1 with
         concentrations 0.2, 0.5, and 0.3, respectively, the invariant embedding for this
         data point will be [0.3, 0, 0.2, 0, 0.5, 0, 1, 0].
 
@@ -277,8 +278,10 @@ def get_invariant_embedding(df):
         pd.DataFrame: A new DataFrame with invariant embeddings for elements and support.
     """
     # Get unique elements and supports
-    unique_elements = sorted(set(df[ATOM_NUMBERS[0]].unique()).union(
-        df[ATOM_NUMBERS[1]].unique()).union(df[ATOM_NUMBERS[2]].unique())
+    unique_elements = sorted(
+        set(df[ATOM_NUMBERS[0]].unique())
+        .union(df[ATOM_NUMBERS[1]].unique())
+        .union(df[ATOM_NUMBERS[2]].unique())
     )
     unique_supports = sorted(df[SUPPORT[0]].unique())
     element_cols = [f"element_{str(e)}" for e in unique_elements]
@@ -295,7 +298,9 @@ def get_invariant_embedding(df):
     for i, atom_col in enumerate(ATOM_NUMBERS):
         for element, name in zip(unique_elements, element_cols):
             mask = df[atom_col] == element
-            invariant_df.loc[mask, name] = df.loc[mask, f"M{i+1}_mol%"]/100  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
+            invariant_df.loc[mask, name] = (
+                df.loc[mask, f"M{i+1}_mol%"] / 100
+            )  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
 
     # Fill in the one-hot encoded supports
     for support, name in zip(unique_supports, support_cols):
@@ -305,10 +310,90 @@ def get_invariant_embedding(df):
     invariant_df[support_cols] = invariant_df[support_cols].astype("int64")
 
     # Prepend all columns not in ATOM_NUMBERS + SUPPORT and ["M1_mol%", "M2_mol%", "M3_mol%"] to the invariant_df
-    other_cols = [col for col in df.columns if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]]
+    other_cols = [
+        col
+        for col in df.columns
+        if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]
+    ]
     invariant_df = pd.concat([df[other_cols], invariant_df], axis=1)
 
     return invariant_df
+
+
+def get_composition_descriptors(
+    df, descriptor_cols=DESCRIPTORS, sites=("M1", "M2", "M3")
+):
+    """Get permutation invariant composition descriptors by aggregating the per-site
+        descriptors of the metals (e.g. M1_electronegativity, M2_electronegativity,
+        M3_electronegativity) over the sites, similar to the compositional descriptors
+        of XenonPy. For each property, the average and variance weighted with M1_mol%,
+        M2_mol%, M3_mol% as well as the minimum and maximum over the occupied sites are
+        computed.
+        Empty sites (mol% of 0) are ignored and catalysts without any metal (bare
+        supports, blank) get zeros for all aggregated descriptors.
+        For example, a data point with M1_electronegativity=1.55, M2_electronegativity=0.93,
+        and M3_electronegativity=1.7 with concentrations 40, 40, and 20 mol%, respectively,
+        gets comp_ave_electronegativity=1.332, comp_var_electronegativity=0.1107,
+        comp_min_electronegativity=0.93, and comp_max_electronegativity=1.7.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        descriptor_cols (list): List of descriptor columns (default: DESCRIPTORS). Per-site
+            columns (starting with one of the site prefixes) are aggregated, all other
+            columns (e.g. support_surface_area) are kept as they are.
+        sites (tuple): Prefixes of the metal sites (default: ("M1", "M2", "M3")).
+
+    Returns:
+        pd.DataFrame: A new DataFrame with the aggregated descriptors that also contains
+            all columns except for the per-site descriptors and M1_mol%, M2_mol%, M3_mol%.
+    """
+    site_prefixes = tuple(f"{site}_" for site in sites)
+    site_descriptor_cols = [
+        col for col in descriptor_cols if col.startswith(site_prefixes)
+    ]
+    # properties that are given for all sites, e.g. "electronegativity"
+    properties = [
+        col[len(site_prefixes[0]) :]
+        for col in site_descriptor_cols
+        if col.startswith(site_prefixes[0])
+        and all(
+            f"{prefix}{col[len(site_prefixes[0]):]}" in site_descriptor_cols
+            for prefix in site_prefixes
+        )
+    ]
+    mol_cols = [f"{site}_mol%" for site in sites]
+    weights = df[mol_cols].to_numpy(dtype=float)
+    occupied = weights > 0
+    total = weights.sum(axis=1)
+    has_metals = total > 0
+
+    composition_df = pd.DataFrame(index=df.index)
+    for prop in properties:
+        values = df[[f"{prefix}{prop}" for prefix in site_prefixes]].to_numpy(
+            dtype=float
+        )
+        weighted_ave = (weights * values).sum(axis=1) / np.where(has_metals, total, 1)
+        # same definition as WeightedVariance in XenonPy: sum_i w_i * (x_i - weighted_ave)^2
+        weighted_var = (weights * (values - weighted_ave[:, None]) ** 2).sum(
+            axis=1
+        ) / np.where(has_metals, total, 1)
+        composition_df[f"comp_ave_{prop}"] = np.where(has_metals, weighted_ave, 0.0)
+        composition_df[f"comp_var_{prop}"] = np.where(has_metals, weighted_var, 0.0)
+        composition_df[f"comp_min_{prop}"] = np.where(
+            has_metals, np.where(occupied, values, np.inf).min(axis=1), 0.0
+        )
+        composition_df[f"comp_max_{prop}"] = np.where(
+            has_metals, np.where(occupied, values, -np.inf).max(axis=1), 0.0
+        )
+
+    # Prepend all columns except for the per-site descriptors and mol% to the composition_df
+    other_cols = [
+        col for col in df.columns if col not in site_descriptor_cols + mol_cols
+    ]
+    composition_df = pd.concat([df[other_cols], composition_df], axis=1)
+
+    return composition_df
+
 
 def get_cross_validation_masks(
     df,
@@ -485,14 +570,16 @@ def split_data(
                 train_pool = all_catalysts
             if test_pool is None:
                 test_pool = all_catalysts
-            assert len(test_pool) >= n_test_catalysts, \
-                f"Not enough catalysts in test_pool ({len(test_pool)}) for the " \
+            assert len(test_pool) >= n_test_catalysts, (
+                f"Not enough catalysts in test_pool ({len(test_pool)}) for the "
                 f"requested split size ({n_test_catalysts})."
+            )
             test_catalysts = rng.sample(list(test_pool), n_test_catalysts)
             remaining_catalysts = [c for c in train_pool if c not in test_catalysts]
-            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, \
-                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "\
+            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, (
+                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "
                 f"the requested split size ({n_train_catalysts + n_val_catalysts})."
+            )
             train_catalysts = rng.sample(
                 remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
             )
@@ -654,7 +741,7 @@ def find_site_permutation_groups(feature_cols, site_prefixes=("M1_", "M2_", "M3_
     for col in feature_cols:
         if not col.startswith(site_prefixes[0]):
             continue
-        suffix = col[len(site_prefixes[0]):]
+        suffix = col[len(site_prefixes[0]) :]
         if suffix in seen_suffixes:
             continue
         seen_suffixes.add(suffix)
