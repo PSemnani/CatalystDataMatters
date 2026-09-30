@@ -186,11 +186,15 @@ def compute_ranking_performance(test_df, target_col, y_pred, top_k=3):
     """
     test_df["y_pred"] = y_pred
     # use maximum of y_true and y_pred per catalyst to determine ranking
-    df_agg = test_df.groupby("Name").agg({target_col: "max", "y_pred": "max"}).reset_index()
+    df_agg = (
+        test_df.groupby("Name").agg({target_col: "max", "y_pred": "max"}).reset_index()
+    )
 
     # check if predicted y is constant
     if df_agg["y_pred"].nunique() == 1:
-        print("WARNING: Predicted values are constant. Spearman correlation is undefined.")
+        print(
+            "WARNING: Predicted values are constant. Spearman correlation is undefined."
+        )
         spearman_corr = 0.0
         top_k_accuracy = 0.0
     else:
@@ -232,9 +236,7 @@ def compute_shap_values(model, X_test, feature_cols):
     sv = expl(X_test, check_additivity=False)
     values = sv.values if hasattr(sv, "values") else sv  # compatibility
     mean_abs_shap = np.mean(np.abs(values), axis=0)
-    return {
-        f"shap_{col}": val for col, val in zip(feature_cols, mean_abs_shap)
-    }
+    return {f"shap_{col}": val for col, val in zip(feature_cols, mean_abs_shap)}
 
 
 def main(
@@ -329,7 +331,19 @@ def main(
                         _df = get_one_hot_encoding(_df)
                     elif feature_set == "invariant":
                         _df = get_invariant_embedding(_df)
-                    feature_cols = [col for col in _df.columns if col not in ["C2y", "Name"]]
+                    feature_cols = [
+                        col for col in _df.columns if col not in ["C2y", "Name"]
+                    ]
+                elif feature_set == "xenonpy":
+                    xp_cols = [col for col in _df.columns if col.startswith("xp_")]
+                    if len(xp_cols) == 0:
+                        raise ValueError(
+                            "No XenonPy columns (xp_*) found. Wrong --data_path?"
+                        )
+                    else:
+                        feature_cols = [
+                            col for col in BASE_PROCESS if not col.endswith("_mol%")
+                        ] + ["support_surface_area"] + xp_cols
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -337,7 +351,7 @@ def main(
                 # initialize random seed (for data splitting, we want the same splits each run)
                 rng = random.Random(seed)
                 # also use the same random state for training xgboost with/without augmentation
-                xgb_rng = random.Random(rng.randint(0, 1000000))
+                xgb_seed = rng.randint(0, 1000000)
 
                 # Data splitting
                 (
@@ -394,7 +408,7 @@ def main(
                         X_test,
                         y_test,
                         feature_cols,
-                        random_state=xgb_rng,
+                        random_state=random.Random(xgb_seed),
                         augment_data_flag=augm,
                         cross_val_masks=cross_val_masks,
                         cross_val_params=_cross_val_params,
@@ -425,7 +439,9 @@ def main(
                     )
                     # print results for this experiment
                     print(f"Test R2: {r2:.4f}")
-                    print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {np.sqrt(mse):.4f}")
+                    print(
+                        f"Test MSE: {mse:.4f}, MAE: {mae:.4f}, RMSE: {np.sqrt(mse):.4f}"
+                    )
                     for k, v in ranking_performance.items():
                         print(f"{k}: {v:.4f}")
                     # compute SHAP values
@@ -468,15 +484,16 @@ def main(
                                 for i, val in enumerate(pred_yield_max_by_catalyst)
                             },
                             "training_time": elapsed_time,
-                            **{f"ranking_{k}": v for k, v in ranking_performance.items()},
+                            **{
+                                f"ranking_{k}": v
+                                for k, v in ranking_performance.items()
+                            },
                             **shap_cols,
                         }
                     )
                     # collect model and splits
                     if store_models:
-                        model_id = (
-                            f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
-                        )
+                        model_id = f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
                         _collected_models[model_id] = xgb_results["model"]
                     if seed not in _collected_splits:
                         _collected_splits[seed] = {

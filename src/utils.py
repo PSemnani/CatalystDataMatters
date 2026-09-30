@@ -123,6 +123,7 @@ settings_to_filename_map = {
     ("one_hot", False): "oh",
     ("one_hot", True): "oha",
     ("invariant", False): "inv",
+    ("xenonpy", False): "xp",
     ("unique", True): "aa+u",
     ("non_unique", True): "aa+nu",
     ("threshold", True): "aa+thresh",
