@@ -1,10 +1,10 @@
 # Code and Data of "How Far Can Machine Learning Guide Catalyst Discovery?"
 
-This repository contains the code and datasets required to reproduce the experiments described in the paper. In addition to rerunning the main training workflows, the repository already includes archived experimental results under `experiments/` and the notebook used to generate the main-text figures at `notebooks/paper_plots.ipynb`.
+This repository contains the code and datasets required to reproduce the experiments described in the paper. The experimental OCM dataset by Nguyen et al. is not included and has to be downloaded separately (see [Preparing the experimental OCM dataset](#preparing-the-experimental-ocm-dataset)). In addition to rerunning the main training workflows, the repository already includes archived experimental results under `experiments/` and the notebook used to generate the main-text figures at `notebooks/paper_plots.ipynb`.
 
 ## Repository layout
 
-- `Dataset/`: source datasets used in the study, including the virtual catalyst datasets.
+- `Dataset/`: datasets used in the study, i.e. the virtual catalyst datasets and the location for the experimental OCM dataset (to be downloaded separately).
 - `src/`: training and analysis scripts.
 - `experiments/`: saved outputs from completed experiments.
 - `notebooks/paper_plots.ipynb`: notebook for generating the plots shown in the main text.
@@ -28,6 +28,21 @@ pip install -r requirements.txt
 ```
 
 3. Run all commands from the repository root.
+
+## Preparing the experimental OCM dataset
+
+The experimental OCM dataset by Nguyen et al. is not included in this repository, since it may not be redistributed. To obtain it and prepare it for our experiments:
+
+1. Go to https://cads.eng.hokudai.ac.jp/datamanagement/ and select "High-throughput OCM data".
+2. Click "Download" on the top right of the table. Please note the terms of use stated on the website.
+3. Store the downloaded csv file as `Dataset/OCM-NguyenEtAl.csv` inside the repository. You can check that you obtained the same version of the data that we used with `sha256sum Dataset/OCM-NguyenEtAl.csv`, which should print `b942693b1269abb2113f1ab5c82f798ff68d44b66aadf1b7f99e565a7cb905b2`.
+4. Add the physicochemical descriptors of the catalyst composition and the support surface area used in our study:
+
+```bash
+python src/build_descriptor_data.py
+```
+
+This creates `Dataset/OCM-NguyenEtAl_with_descriptors.csv`, which is the dataset used in all experiments with the experimental OCM data below.
 
 
 ## Running the main scripts
@@ -173,7 +188,7 @@ If you use the code or data from this repository, please cite the corresponding 
 }
 ```
 
-If you use the enriched experimental dataset (`Dataset/OCM-NguyenEtAl_with_descriptors.csv`) please also cite its original source:
+If you use the experimental OCM dataset (`Dataset/OCM-NguyenEtAl.csv`) or our version enriched with descriptors (`Dataset/OCM-NguyenEtAl_with_descriptors.csv`), please also cite its original source:
 
 ```
 @article{nguyen2019high,
