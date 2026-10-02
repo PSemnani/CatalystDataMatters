@@ -275,7 +275,11 @@ def compute_permutation_importance(
     Features (or groups) that are constant within each catalyst (e.g. composition
     descriptors) are permuted on the catalyst level, i.e. every test catalyst gets the
     values of another (randomly assigned) test catalyst for all of its rows. All other
-    features (e.g. process conditions) are permuted row-wise.
+    features (e.g. process conditions) are permuted row-wise. The columns M1_mol%,
+    M2_mol%, M3_mol% are ignored when checking whether features are constant within
+    each catalyst, since the original data contains different values for some
+    catalysts at different temperatures (they are permuted on the catalyst level
+    together with the other features of the catalyst).
     The importance is the increase in MAE and the decrease in the Spearman correlation
     of the catalyst ranking (by maximum yield) compared to the unpermuted test set,
     so positive values indicate important features.
@@ -313,6 +317,8 @@ def compute_permutation_importance(
         return mae, spearman
 
     def is_catalyst_level(cols):
+        # ignore mol% columns (inconsistent within some catalysts in the original data)
+        cols = [col for col in cols if not feature_cols[col].endswith("_mol%")]
         values = pd.DataFrame(X_test[:, cols]).groupby(catalyst_codes).nunique()
         return bool((values <= 1).all().all())
 
