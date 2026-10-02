@@ -22,6 +22,8 @@ BASE_PROCESS = [
     "M2_mol%",
     "M3_mol%",
 ]
+# process conditions (BASE_PROCESS without the catalyst composition M1_mol%, M2_mol%, M3_mol%)
+PROCESS_CONDITIONS = [col for col in BASE_PROCESS if not col.endswith("_mol%")]
 ATOM_NUMBERS = ["M1_atom_number", "M2_atom_number", "M3_atom_number"]
 SUPPORT = ["Support_ID"]
 DESCRIPTORS = [

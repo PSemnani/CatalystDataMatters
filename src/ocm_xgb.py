@@ -12,6 +12,7 @@ from scipy.stats import spearmanr
 
 from utils import (
     BASE_PROCESS,
+    PROCESS_CONDITIONS,
     ATOM_NUMBERS,
     SUPPORT,
     DESCRIPTORS,
@@ -219,9 +220,7 @@ def compute_ranking_performance(test_df, target_col, y_pred, top_k=3):
 
 def compute_shap_values(model, X_test, feature_cols):
     """
-    Compute mean absolute SHAP values per feature for a trained model, using
-    the same computation as ocm_xgb_compute_shap.py so that results from both
-    scripts are directly comparable.
+    Compute mean absolute SHAP values per feature for a trained model.
 
     Args:
         model: Trained XGBoost model.
@@ -240,6 +239,110 @@ def compute_shap_values(model, X_test, feature_cols):
     return {f"shap_{col}": val for col, val in zip(feature_cols, mean_abs_shap)}
 
 
+def predict_xgboost(model, scaler, X, feature_cols, augment_data_flag=False):
+    """
+    Predict with a model from train_xgboost on unscaled and unaugmented data, using
+    the same pipeline as for the test set in train_xgboost (augmentation, scaling,
+    averaging the predictions of augmented copies). Returns one prediction per row of X.
+    """
+    group_ids = None
+    if augment_data_flag:
+        X, _, _, _, _, _, _, group_ids = augment_data(
+            X, np.zeros(len(X)), None, None, None, None, feature_cols
+        )
+        group_ids = group_ids[0]
+    preds = model.predict(scaler.transform(X))
+    if group_ids is not None:
+        preds = scatter_mean(preds, group_ids)
+    return preds
+
+
+def compute_permutation_importance(
+    model,
+    scaler,
+    X_test,
+    test_df,
+    target_col,
+    feature_cols,
+    feature_groups,
+    augment_data_flag=False,
+    n_repeats=10,
+    rng=None,
+):
+    """
+    Compute permutation importance on the test set for every single feature and for
+    groups of features (all features of a group are permuted jointly).
+    Features (or groups) that are constant within each catalyst (e.g. composition
+    descriptors) are permuted on the catalyst level, i.e. every test catalyst gets the
+    values of another (randomly assigned) test catalyst for all of its rows. All other
+    features (e.g. process conditions) are permuted row-wise.
+    The importance is the increase in MAE and the decrease in the Spearman correlation
+    of the catalyst ranking (by maximum yield) compared to the unpermuted test set,
+    so positive values indicate important features.
+
+    Args:
+        model, scaler: Trained model and scaler from train_xgboost.
+        X_test: Unscaled and unaugmented test features (rows aligned with test_df).
+        test_df: Test data with catalyst names ("Name") and target values.
+        target_col: Name of the target column.
+        feature_cols: List of feature names (columns of X_test).
+        feature_groups: Dict of group name -> list of feature names.
+        augment_data_flag: Whether the model was trained with data augmentation.
+        n_repeats: Number of permutations per feature (group).
+        rng: np.random.Generator used for the permutations.
+
+    Returns:
+        Dict with mean and std over the repetitions of the importance for every
+        feature (perm_{metric}_{feature}_{mean,std}) and group
+        (perm_{metric}_group_{group}_{mean,std}), with metric "mae" and "spearman".
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    y_true = test_df[target_col].values
+    names = test_df["Name"].values
+    catalysts, catalyst_codes = np.unique(names, return_inverse=True)
+    # one representative row per catalyst (for catalyst-level permutations)
+    _, first_rows = np.unique(catalyst_codes, return_index=True)
+
+    def evaluate(X):
+        preds = predict_xgboost(model, scaler, X, feature_cols, augment_data_flag)
+        mae = float(np.mean(np.abs(preds - y_true)))
+        spearman = compute_ranking_performance(test_df.copy(), target_col, preds)[
+            "spearman_corr"
+        ]
+        return mae, spearman
+
+    def is_catalyst_level(cols):
+        values = pd.DataFrame(X_test[:, cols]).groupby(catalyst_codes).nunique()
+        return bool((values <= 1).all().all())
+
+    base_mae, base_spearman = evaluate(X_test)
+    to_permute = {feature: [feature] for feature in feature_cols}
+    to_permute.update(
+        {f"group_{group}": features for group, features in feature_groups.items()}
+    )
+    importance = {}
+    for name, features in to_permute.items():
+        cols = [feature_cols.index(feature) for feature in features]
+        catalyst_level = is_catalyst_level(cols)
+        delta_mae, delta_spearman = [], []
+        for _ in range(n_repeats):
+            X_perm = X_test.copy()
+            if catalyst_level:
+                donor_rows = first_rows[rng.permutation(len(catalysts))[catalyst_codes]]
+            else:
+                donor_rows = rng.permutation(len(X_test))
+            X_perm[:, cols] = X_test[donor_rows][:, cols]
+            mae, spearman = evaluate(X_perm)
+            delta_mae.append(mae - base_mae)
+            delta_spearman.append(base_spearman - spearman)
+        importance[f"perm_mae_{name}_mean"] = float(np.mean(delta_mae))
+        importance[f"perm_mae_{name}_std"] = float(np.std(delta_mae))
+        importance[f"perm_spearman_{name}_mean"] = float(np.mean(delta_spearman))
+        importance[f"perm_spearman_{name}_std"] = float(np.std(delta_spearman))
+    return importance
+
+
 def main(
     data_path,
     seeds,
@@ -255,6 +358,8 @@ def main(
     store_plots=False,
     store_models=False,
     compute_shap=False,
+    permutation_importance=False,
+    permutation_repeats=10,
 ):
     # read data
     df = pd.read_csv(data_path)
@@ -467,6 +572,28 @@ def main(
                             xgb_results["X_test"],
                             feature_cols,
                         )
+                    # compute permutation importance of single features and of the groups
+                    # process conditions and catalyst composition (incl. support)
+                    perm_cols = {}
+                    if permutation_importance:
+                        start_time = time()
+                        feature_groups = {
+                            "process": [col for col in feature_cols if col in PROCESS_CONDITIONS],
+                            "composition": [col for col in feature_cols if col not in PROCESS_CONDITIONS],
+                        }
+                        perm_cols = compute_permutation_importance(
+                            xgb_results["model"],
+                            xgb_results["scaler"],
+                            X_test,
+                            test_df,
+                            target_col,
+                            feature_cols,
+                            {group: cols for group, cols in feature_groups.items() if cols},
+                            augment_data_flag=augm,
+                            n_repeats=permutation_repeats,
+                            rng=np.random.default_rng(xgb_seed),
+                        )
+                        print(f"Permutation importance computed in {time() - start_time:.2f} seconds.")
                     # store results for this experiment
                     results_rows.append(
                         {
@@ -504,6 +631,7 @@ def main(
                                 for k, v in ranking_performance.items()
                             },
                             **shap_cols,
+                            **perm_cols,
                         }
                     )
                     # collect model and splits
@@ -621,6 +749,18 @@ if __name__ == "__main__":
         help="Whether to compute SHAP values for each trained model directly "
         "after training (default: False)",
     )
+    parser.add_argument(
+        "--compute_permutation_importance",
+        action="store_true",
+        help="Whether to compute the permutation importance of single features and of the "
+        "groups process conditions and catalyst composition on the test set (default: False)",
+    )
+    parser.add_argument(
+        "--permutation_repeats",
+        type=int,
+        default=10,
+        help="Number of permutations per feature (group) for the permutation importance (default: 10)",
+    )
 
     def parse_seeds(tokens):
         out = []
@@ -684,4 +824,6 @@ if __name__ == "__main__":
         store_plots=args.store_plots,
         store_models=args.store_models,
         compute_shap=args.compute_shap,
+        permutation_importance=args.compute_permutation_importance,
+        permutation_repeats=args.permutation_repeats,
     )
