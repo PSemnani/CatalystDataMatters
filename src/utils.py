@@ -128,6 +128,7 @@ settings_to_filename_map = {
     ("one_hot", True): "oha",
     ("invariant", False): "inv",
     ("xenonpy", False): "xp",
+    ("xenonpy_active", False): "xpact",
     ("composition_descriptors", False): "cd",
     ("unique", True): "aa+u",
     ("non_unique", True): "aa+nu",

@@ -455,11 +455,14 @@ def main(
                         col for col in _df.columns if col not in ["C2y", "Name"]
                     ]
 
-                elif feature_set == "xenonpy":
-                    xp_cols = [col for col in _df.columns if col.startswith("xp_")]
+                elif feature_set in ["xenonpy", "xenonpy_active"]:
+                    # xenonpy: XenonPy descriptors of active phase and support,
+                    # xenonpy_active: only of the active phase (without the support block)
+                    prefix = "xp_" if feature_set == "xenonpy" else "xp_active_"
+                    xp_cols = [col for col in _df.columns if col.startswith(prefix)]
                     if len(xp_cols) == 0:
                         raise ValueError(
-                            "No XenonPy columns (xp_*) found. Wrong --data_path?"
+                            f"No XenonPy columns ({prefix}*) found. Wrong --data_path?"
                         )
                     else:
                         feature_cols = (
@@ -513,7 +516,7 @@ def main(
                     # check if augmentation is applicable
                     if (
                         feature_set
-                        in ["invariant", "xenonpy", "composition_descriptors"]
+                        in ["invariant", "xenonpy", "xenonpy_active", "composition_descriptors"]
                         and augm
                     ):
                         print(
@@ -729,7 +732,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
     )
     parser.add_argument(
         "--augmentations",
