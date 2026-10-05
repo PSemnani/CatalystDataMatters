@@ -582,7 +582,6 @@ def main(
                     # process conditions and catalyst composition (incl. support)
                     perm_cols = {}
                     if permutation_importance:
-                        start_time = time()
                         feature_groups = {
                             "process": [col for col in feature_cols if col in PROCESS_CONDITIONS],
                             "composition": [col for col in feature_cols if col not in PROCESS_CONDITIONS],
@@ -599,7 +598,6 @@ def main(
                             n_repeats=permutation_repeats,
                             rng=np.random.default_rng(xgb_seed),
                         )
-                        print(f"Permutation importance computed in {time() - start_time:.2f} seconds.")
                     # store results for this experiment
                     results_rows.append(
                         {
