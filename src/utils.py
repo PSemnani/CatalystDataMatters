@@ -10,7 +10,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-BASE_PROCESS = [
+PROCESS_CONDITIONS = [
     "Temp",
     "CT",
     "CH4/O2",
@@ -18,12 +18,14 @@ BASE_PROCESS = [
     "O2_flow",
     "CH4_flow",
     "Total_flow",
+]
+ELEMENT_RATIOS = [
     "M1_mol%",
     "M2_mol%",
     "M3_mol%",
 ]
-# process conditions (BASE_PROCESS without the catalyst composition M1_mol%, M2_mol%, M3_mol%)
-PROCESS_CONDITIONS = [col for col in BASE_PROCESS if not col.endswith("_mol%")]
+# process conditions and element ratios of the catalyst composition
+BASE_PROCESS = PROCESS_CONDITIONS + ELEMENT_RATIOS
 ATOM_NUMBERS = ["M1_atom_number", "M2_atom_number", "M3_atom_number"]
 SUPPORT = ["Support_ID"]
 DESCRIPTORS = [
@@ -311,11 +313,11 @@ def get_invariant_embedding(df):
     # Cast one-hot support columns to integer dtype (keeps element columns as float)
     invariant_df[support_cols] = invariant_df[support_cols].astype("int64")
 
-    # Prepend all columns not in ATOM_NUMBERS + SUPPORT and ["M1_mol%", "M2_mol%", "M3_mol%"] to the invariant_df
+    # Prepend all columns not in ATOM_NUMBERS + SUPPORT + ELEMENT_RATIOS to the invariant_df
     other_cols = [
         col
         for col in df.columns
-        if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]
+        if col not in ATOM_NUMBERS + SUPPORT + ELEMENT_RATIOS
     ]
     invariant_df = pd.concat([df[other_cols], invariant_df], axis=1)
 

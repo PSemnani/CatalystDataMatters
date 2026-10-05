@@ -13,6 +13,7 @@ from scipy.stats import spearmanr
 from utils import (
     BASE_PROCESS,
     PROCESS_CONDITIONS,
+    ELEMENT_RATIOS,
     ATOM_NUMBERS,
     SUPPORT,
     DESCRIPTORS,
@@ -318,7 +319,7 @@ def compute_permutation_importance(
 
     def is_catalyst_level(cols):
         # ignore mol% columns (inconsistent within some catalysts in the original data)
-        cols = [col for col in cols if not feature_cols[col].endswith("_mol%")]
+        cols = [col for col in cols if feature_cols[col] not in ELEMENT_RATIOS]
         values = pd.DataFrame(X_test[:, cols]).groupby(catalyst_codes).nunique()
         return bool((values <= 1).all().all())
 
@@ -462,7 +463,7 @@ def main(
                         )
                     else:
                         feature_cols = (
-                            [col for col in BASE_PROCESS if not col.endswith("_mol%")]
+                            PROCESS_CONDITIONS
                             + ["support_surface_area"]
                             + xp_cols
                         )
