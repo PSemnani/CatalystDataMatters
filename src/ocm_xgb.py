@@ -23,6 +23,7 @@ from utils import (
     get_invariant_embedding,
     get_one_hot_encoding,
     get_composition_descriptors,
+    get_xenonpy_descriptors,
     get_cross_validation_param_sets,
     scale_data,
     split_data,
@@ -458,18 +459,14 @@ def main(
                 elif feature_set in ["xenonpy", "xenonpy_active"]:
                     # xenonpy: XenonPy descriptors of active phase and support,
                     # xenonpy_active: only of the active phase (without the support block)
-                    prefix = "xp_" if feature_set == "xenonpy" else "xp_active_"
-                    xp_cols = [col for col in _df.columns if col.startswith(prefix)]
-                    if len(xp_cols) == 0:
-                        raise ValueError(
-                            f"No XenonPy columns ({prefix}*) found. Wrong --data_path?"
-                        )
-                    else:
-                        feature_cols = (
-                            PROCESS_CONDITIONS
-                            + ["support_surface_area"]
-                            + xp_cols
-                        )
+                    feature_cols = PROCESS_CONDITIONS + ["support_surface_area"]
+                    _df = df[feature_cols + ["C2y", "Name"]]
+                    _df = get_xenonpy_descriptors(
+                        _df, include_support=(feature_set == "xenonpy")
+                    )
+                    feature_cols = [
+                        col for col in _df.columns if col not in ["C2y", "Name"]
+                    ]
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"

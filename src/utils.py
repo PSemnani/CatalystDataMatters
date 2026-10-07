@@ -400,6 +400,40 @@ def get_composition_descriptors(
     return composition_df
 
 
+# table with the XenonPy descriptors of every catalyst (see src/data_scripts/compute_xenonpy_descriptors.py)
+XENONPY_DESCRIPTORS_PATH = Path(__file__).resolve().parent.parent / "Dataset" / "xenonpy_descriptors.csv"
+
+
+def get_xenonpy_descriptors(df, include_support=True, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name"):
+    """Get the XenonPy compositional descriptors of the active phase (columns xp_active_*)
+        and, optionally, of the support (columns xp_support_*) for every row of a DataFrame.
+        The descriptors are loaded from a table with one row per catalyst, which is computed
+        with src/data_scripts/compute_xenonpy_descriptors.py (requires a separate environment),
+        and matched to the rows by the catalyst name.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        include_support (bool): Whether to include the descriptors of the support
+            (default: True). If False, only the descriptors of the active phase are added.
+        path (str or Path): Path to the table with the XenonPy descriptors
+            (default: Dataset/xenonpy_descriptors.csv in the repository).
+        catalyst_name_column (str): The name of the column containing catalyst names in df
+            and in the table (default: "Name").
+
+    Returns:
+        pd.DataFrame: A new DataFrame with all columns of df followed by the XenonPy descriptors
+            (same index and row order as df).
+    """
+    descriptors = pd.read_csv(path, float_precision="round_trip").set_index(catalyst_name_column)
+    prefixes = ("xp_active_", "xp_support_") if include_support else ("xp_active_",)
+    descriptors = descriptors[[col for col in descriptors.columns if col.startswith(prefixes)]]
+    missing = set(df[catalyst_name_column]) - set(descriptors.index)
+    if missing:
+        raise ValueError(f"No XenonPy descriptors found in {path} for catalysts: {sorted(missing)}")
+    xenonpy_df = descriptors.loc[df[catalyst_name_column]].set_index(df.index)
+    return pd.concat([df, xenonpy_df], axis=1)
+
+
 def get_cross_validation_masks(
     df,
     train_indices,
