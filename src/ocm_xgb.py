@@ -44,6 +44,7 @@ ADDITIONAL_DESCRIPTORS = {
     "second_ionization": INVERSE_SECOND_IONIZATION,
     "mulliken": MULLIKEN_ELECTRONEGATIVITY,
     "band_center": ["support_band_center"],
+    "optical_basicity": ["support_optical_basicity"],
     "support_types": SUPPORT_TYPES,
 }
 
@@ -783,7 +784,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'support_types') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'optical_basicity', 'support_types') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
     )
     parser.add_argument(
         "--augmentations",
