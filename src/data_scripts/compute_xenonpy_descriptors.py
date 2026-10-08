@@ -9,17 +9,21 @@ with one row per catalyst (column "Name" and the descriptor columns).
   data at 900 C use their other rows, which must then have a consistent composition.
 - Support (columns xp_support_*): stoichiometric composition of the support.
 For both, XenonPy computes the weighted average, weighted variance, maximum, and minimum
-of 58 elemental properties. Catalysts without active phase (bare supports, blank) or
-without support (blank) get zeros for the respective descriptors.
+of 58 elemental properties (from XenonPy's completed element table, in which missing
+elemental data are imputed by XenonPy). Catalysts without active phase (bare supports,
+blank) or without support (blank) get a missing value for the respective descriptors:
+NaN by default (handled by XGBoost), or the value given with --missing_value (e.g. 0, as
+in the previous version of the table).
 
 Requires the "xenonpy" environment (xenonpy, pymatgen, rdkit) and the element data
 (from xenonpy.datatools import preset; preset.sync("elements_completed")).
 Usage: python src/data_scripts/compute_xenonpy_descriptors.py [--csv Dataset/OCM-NguyenEtAl.csv]
-           [--output Dataset/xenonpy_descriptors.csv]
+           [--output Dataset/xenonpy_descriptors.csv] [--missing_value 0]
 """
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from pymatgen.core import Composition
 from xenonpy.descriptor import Compositions
@@ -74,13 +78,15 @@ def support_composition(support):
     return Composition(SUPPORT_FORMULAS.get(support, support)).fractional_composition
 
 
-def featurize(compositions, prefix):
-    """Featurize a Series of compositions (None for missing ones, which get zeros)."""
+def featurize(compositions, prefix, missing_value=np.nan):
+    """Featurize a Series of compositions (None for missing ones, which get missing_value)."""
     calculator = Compositions(featurizers=FEATURIZERS, n_jobs=1)
     present = compositions.dropna()
     features = calculator.transform(present.tolist())
     features.index = present.index
-    features = features.reindex(compositions.index, fill_value=0.0)
+    if features.isna().any().any():
+        raise ValueError(f"NaN in XenonPy descriptors ({prefix}) of existing compositions.")
+    features = features.reindex(compositions.index, fill_value=missing_value)
     features.columns = [f"{prefix}_{c.replace(':', '_')}" for c in features.columns]
     return features
 
@@ -89,21 +95,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", type=Path, default=Path("Dataset/OCM-NguyenEtAl.csv"),
                         help="Path to the original data (default: Dataset/OCM-NguyenEtAl.csv)")
-    parser.add_argument("--output", type=Path, default=Path("Dataset/xenonpy_descriptors.csv"),
-                        help="Path of the output table (default: Dataset/xenonpy_descriptors.csv)")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Path of the output table (default: Dataset/xenonpy_descriptors.csv, "
+                        "with the suffix _missing<value> for a missing value other than NaN)")
+    parser.add_argument("--missing_value", type=float, default=float("nan"),
+                        help="Value for the descriptors of a missing active phase or support "
+                        "(default: NaN; use 0 for the previous version of the table)")
     args = parser.parse_args()
+    if args.output is None:
+        suffix = "" if np.isnan(args.missing_value) else f"_missing{args.missing_value:g}"
+        args.output = Path(f"Dataset/xenonpy_descriptors{suffix}.csv")
 
     df = pd.read_csv(args.csv)
     # the original file has a trailing space in the column name "Support "
     df.columns = df.columns.str.strip()
     catalysts = catalyst_rows(df)
 
-    active = featurize(catalysts.apply(active_composition, axis=1), "xp_active")
-    support = featurize(catalysts["Support"].map(support_composition), "xp_support")
+    active = featurize(catalysts.apply(active_composition, axis=1), "xp_active", args.missing_value)
+    support = featurize(catalysts["Support"].map(support_composition), "xp_support", args.missing_value)
     descriptors = pd.concat([active, support], axis=1)
     descriptors.index.name = "Name"
-    if descriptors.isna().any().any():
-        raise ValueError("NaN in XenonPy descriptors.")
+    print(f"missing values: {int(descriptors.isna().sum().sum())} NaN entries")
 
     descriptors.to_csv(args.output)
     print(

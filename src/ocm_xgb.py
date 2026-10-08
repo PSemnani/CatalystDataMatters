@@ -17,6 +17,9 @@ from utils import (
     ATOM_NUMBERS,
     SUPPORT,
     DESCRIPTORS,
+    INVERSE_SECOND_IONIZATION,
+    MULLIKEN_ELECTRONEGATIVITY,
+    SUPPORT_TYPES,
     CONDITIONS_TEMP_SINGLE,
     CONDITIONS_TEMP_PAIRS,
     CONDITIONS_CH4_O2_RATIO,
@@ -33,6 +36,50 @@ from utils import (
     get_cross_validation_masks,
     settings_to_filename_map,
 )
+
+# additional descriptors that can be appended to the feature set base+descriptors with "+",
+# e.g. "base+descriptors+mulliken+band_center"
+BASE_DESCRIPTORS = "base+descriptors"
+ADDITIONAL_DESCRIPTORS = {
+    "second_ionization": INVERSE_SECOND_IONIZATION,
+    "mulliken": MULLIKEN_ELECTRONEGATIVITY,
+    "band_center": ["support_band_center"],
+    "support_types": SUPPORT_TYPES,
+}
+
+
+def is_descriptor_feature_set(feature_set):
+    return feature_set == BASE_DESCRIPTORS or feature_set.startswith(BASE_DESCRIPTORS + "+")
+
+
+def get_additional_descriptors(feature_set):
+    """Names of the additional descriptors appended to base+descriptors (e.g. ["mulliken"])."""
+    additional = [part for part in feature_set[len(BASE_DESCRIPTORS):].split("+") if part]
+    unknown = [part for part in additional if part not in ADDITIONAL_DESCRIPTORS]
+    if unknown:
+        raise ValueError(
+            f"Invalid additional descriptors {unknown} in feature set {feature_set} "
+            f"(choose from {list(ADDITIONAL_DESCRIPTORS)})"
+        )
+    return additional
+
+
+def get_descriptor_feature_cols(feature_set):
+    """Feature columns of base+descriptors and the additional descriptors appended with "+"."""
+    feature_cols = BASE_PROCESS + DESCRIPTORS
+    for part in get_additional_descriptors(feature_set):
+        feature_cols += [col for col in ADDITIONAL_DESCRIPTORS[part] if col not in feature_cols]
+    return feature_cols
+
+
+def get_model_name(feature_set, augmentation):
+    """Short name of a feature set and augmentation setting (used for stored models)."""
+    if (feature_set, augmentation) in settings_to_filename_map:
+        return settings_to_filename_map[(feature_set, augmentation)]
+    if is_descriptor_feature_set(feature_set):
+        base_name = settings_to_filename_map[(BASE_DESCRIPTORS, augmentation)]
+        return "+".join([base_name] + get_additional_descriptors(feature_set))
+    raise ValueError(f"No model name defined for feature set {feature_set}")
 
 
 def train_xgboost(
@@ -432,8 +479,15 @@ def main(
             for j, feature_set in enumerate(feature_sets):
                 _df = df
                 # run experiments per feature set
-                if feature_set == "base+descriptors":
-                    feature_cols = BASE_PROCESS + DESCRIPTORS
+                if is_descriptor_feature_set(feature_set):
+                    # base+descriptors, optionally with additional descriptors appended with "+"
+                    feature_cols = get_descriptor_feature_cols(feature_set)
+                    missing = [col for col in feature_cols if col not in df.columns]
+                    if missing:
+                        raise ValueError(
+                            f"Columns {missing} for feature set {feature_set} not found in the data "
+                            "(use a dataset built with src/data_scripts/build_updated_descriptor_data.py)"
+                        )
                 elif feature_set == "base+atom_numbers+support":
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
                 elif feature_set == "all":  # all features
@@ -641,7 +695,7 @@ def main(
                     )
                     # collect model and splits
                     if store_models:
-                        model_id = f"{settings_to_filename_map[(feature_set, augm)]}_{seed:04d}"
+                        model_id = f"{get_model_name(feature_set, augm)}_{seed:04d}"
                         _collected_models[model_id] = xgb_results["model"]
                     if seed not in _collected_splits:
                         _collected_splits[seed] = {
@@ -729,7 +783,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'support_types') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
     )
     parser.add_argument(
         "--augmentations",

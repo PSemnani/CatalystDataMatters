@@ -46,6 +46,25 @@ DESCRIPTORS = [
     "M3_oxidation_state",
     "support_surface_area",
 ]
+# additional metal site descriptors (see src/data_scripts/build_updated_descriptor_data.py)
+INVERSE_SECOND_IONIZATION = [
+    "M1_inverse_second_ionization",
+    "M2_inverse_second_ionization",
+    "M3_inverse_second_ionization",
+]
+MULLIKEN_ELECTRONEGATIVITY = [
+    "M1_mulliken_electronegativity",
+    "M2_mulliken_electronegativity",
+    "M3_mulliken_electronegativity",
+]
+# one-hot encoded material class of the support (see src/data_scripts/build_updated_descriptor_data.py)
+SUPPORT_TYPES = [
+    "support_class_oxide",
+    "support_class_zeolite",
+    "support_class_carbide",
+    "support_class_nitride",
+    "support_class_none",
+]
 
 CONDITIONS_TEMP_SINGLE = {
     "700": {"Temp": {"==": 700}},
@@ -334,8 +353,9 @@ def get_composition_descriptors(
         of XenonPy. For each property, the average and variance weighted with M1_mol%,
         M2_mol%, M3_mol% as well as the minimum and maximum over the occupied sites are
         computed.
-        Empty sites (mol% of 0) are ignored and catalysts without any metal (bare
-        supports, blank) get zeros for all aggregated descriptors.
+        Empty sites (mol% of 0) are ignored. Catalysts without any metal (bare supports,
+        blank) get the value that the data contains for the descriptors of their empty
+        sites (e.g. NaN or 0, depending on how missing values are encoded in the dataset).
         For example, a data point with M1_electronegativity=1.55, M2_electronegativity=0.93,
         and M3_electronegativity=1.7 with concentrations 40, 40, and 20 mol%, respectively,
         gets comp_ave_electronegativity=1.332, comp_var_electronegativity=0.1107,
@@ -377,18 +397,22 @@ def get_composition_descriptors(
         values = df[[f"{prefix}{prop}" for prefix in site_prefixes]].to_numpy(
             dtype=float
         )
+        # ignore the values of empty sites (which may be NaN, since 0 * NaN = NaN)
+        # value used in the data for empty sites (for catalysts without any metal)
+        missing_value = values[:, 0]
+        values = np.where(occupied, values, 0.0)
         weighted_ave = (weights * values).sum(axis=1) / np.where(has_metals, total, 1)
         # same definition as WeightedVariance in XenonPy: sum_i w_i * (x_i - weighted_ave)^2
         weighted_var = (weights * (values - weighted_ave[:, None]) ** 2).sum(
             axis=1
         ) / np.where(has_metals, total, 1)
-        composition_df[f"comp_ave_{prop}"] = np.where(has_metals, weighted_ave, 0.0)
-        composition_df[f"comp_var_{prop}"] = np.where(has_metals, weighted_var, 0.0)
+        composition_df[f"comp_ave_{prop}"] = np.where(has_metals, weighted_ave, missing_value)
+        composition_df[f"comp_var_{prop}"] = np.where(has_metals, weighted_var, missing_value)
         composition_df[f"comp_min_{prop}"] = np.where(
-            has_metals, np.where(occupied, values, np.inf).min(axis=1), 0.0
+            has_metals, np.where(occupied, values, np.inf).min(axis=1), missing_value
         )
         composition_df[f"comp_max_{prop}"] = np.where(
-            has_metals, np.where(occupied, values, -np.inf).max(axis=1), 0.0
+            has_metals, np.where(occupied, values, -np.inf).max(axis=1), missing_value
         )
 
     # Prepend all columns except for the per-site descriptors and mol% to the composition_df
@@ -871,12 +895,15 @@ def augment_data(
         if len(relevant_cols) > 0:
             relevant = variants[:, :, relevant_cols]  # (n, n_perms, n_relevant)
             # mark, for each row, permutations that reproduce an earlier one
+            # (missing values count as equal, since NaN != NaN)
+            missing = pd.isna(relevant)
             duplicate = np.zeros((n, n_perms), dtype=bool)
             for a in range(n_perms):
                 for b in range(a + 1, n_perms):
-                    duplicate[:, b] |= np.all(
-                        relevant[:, a, :] == relevant[:, b, :], axis=1
+                    equal = (relevant[:, a, :] == relevant[:, b, :]) | (
+                        missing[:, a, :] & missing[:, b, :]
                     )
+                    duplicate[:, b] |= np.all(equal, axis=1)
             keep_mask = ~duplicate
         else:
             # nothing to permute: only the (unmodified) identity variant is kept
