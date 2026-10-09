@@ -428,9 +428,11 @@ def get_composition_descriptors(
 XENONPY_DESCRIPTORS_PATH = Path(__file__).resolve().parent.parent / "Dataset" / "xenonpy_descriptors.csv"
 
 
-def get_xenonpy_descriptors(df, include_support=True, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name"):
+def get_xenonpy_descriptors(
+    df, include_support=True, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name", include_active=True
+):
     """Get the XenonPy compositional descriptors of the active phase (columns xp_active_*)
-        and, optionally, of the support (columns xp_support_*) for every row of a DataFrame.
+        and/or of the support (columns xp_support_*) for every row of a DataFrame.
         The descriptors are loaded from a table with one row per catalyst, which is computed
         with src/data_scripts/compute_xenonpy_descriptors.py (requires a separate environment),
         and matched to the rows by the catalyst name.
@@ -438,7 +440,10 @@ def get_xenonpy_descriptors(df, include_support=True, path=XENONPY_DESCRIPTORS_P
     Args:
         df (pd.DataFrame): The input DataFrame.
         include_support (bool): Whether to include the descriptors of the support
-            (default: True). If False, only the descriptors of the active phase are added.
+            (default: True).
+        include_active (bool): Whether to include the descriptors of the active phase
+            (default: True). E.g. include_active=False and include_support=True only adds
+            the descriptors of the support.
         path (str or Path): Path to the table with the XenonPy descriptors
             (default: Dataset/xenonpy_descriptors.csv in the repository).
         catalyst_name_column (str): The name of the column containing catalyst names in df
@@ -449,7 +454,11 @@ def get_xenonpy_descriptors(df, include_support=True, path=XENONPY_DESCRIPTORS_P
             (same index and row order as df).
     """
     descriptors = pd.read_csv(path, float_precision="round_trip").set_index(catalyst_name_column)
-    prefixes = ("xp_active_", "xp_support_") if include_support else ("xp_active_",)
+    prefixes = tuple(
+        prefix for prefix, include in [("xp_active_", include_active), ("xp_support_", include_support)] if include
+    )
+    if not prefixes:
+        raise ValueError("At least one of include_active and include_support has to be True.")
     descriptors = descriptors[[col for col in descriptors.columns if col.startswith(prefixes)]]
     missing = set(df[catalyst_name_column]) - set(descriptors.index)
     if missing:

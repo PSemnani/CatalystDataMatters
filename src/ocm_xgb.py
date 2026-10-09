@@ -47,6 +47,9 @@ ADDITIONAL_DESCRIPTORS = {
     "optical_basicity": ["support_optical_basicity"],
     "support_types": SUPPORT_TYPES,
 }
+# additional descriptors that are not columns of the data but computed when loading the data:
+# XenonPy descriptors of the support (see get_xenonpy_descriptors) and one-hot encoded supports
+COMPUTED_DESCRIPTORS = ["xenonpy_support", "support_onehot"]
 
 
 def is_descriptor_feature_set(feature_set):
@@ -56,21 +59,39 @@ def is_descriptor_feature_set(feature_set):
 def get_additional_descriptors(feature_set):
     """Names of the additional descriptors appended to base+descriptors (e.g. ["mulliken"])."""
     additional = [part for part in feature_set[len(BASE_DESCRIPTORS):].split("+") if part]
-    unknown = [part for part in additional if part not in ADDITIONAL_DESCRIPTORS]
+    unknown = [part for part in additional if part not in ADDITIONAL_DESCRIPTORS and part not in COMPUTED_DESCRIPTORS]
     if unknown:
         raise ValueError(
             f"Invalid additional descriptors {unknown} in feature set {feature_set} "
-            f"(choose from {list(ADDITIONAL_DESCRIPTORS)})"
+            f"(choose from {list(ADDITIONAL_DESCRIPTORS) + COMPUTED_DESCRIPTORS})"
         )
     return additional
 
 
 def get_descriptor_feature_cols(feature_set):
-    """Feature columns of base+descriptors and the additional descriptors appended with "+"."""
+    """Feature columns of base+descriptors and the additional descriptors appended with "+"
+    that are columns of the data (computed descriptors are added by add_computed_descriptors)."""
     feature_cols = BASE_PROCESS + DESCRIPTORS
     for part in get_additional_descriptors(feature_set):
-        feature_cols += [col for col in ADDITIONAL_DESCRIPTORS[part] if col not in feature_cols]
+        if part in ADDITIONAL_DESCRIPTORS:
+            feature_cols += [col for col in ADDITIONAL_DESCRIPTORS[part] if col not in feature_cols]
     return feature_cols
+
+
+def add_computed_descriptors(df, feature_cols, feature_set):
+    """Add the computed descriptors of the feature set to the data and the feature columns."""
+    feature_cols = list(feature_cols)
+    for part in get_additional_descriptors(feature_set):
+        if part == "xenonpy_support":
+            # XenonPy descriptors of the support composition (without those of the active phase)
+            df = get_xenonpy_descriptors(df, include_active=False, include_support=True)
+            feature_cols += [col for col in df.columns if col.startswith("xp_support_")]
+        elif part == "support_onehot":
+            # one 0/1 column per support (incl. the blank), i.e. the identity of the support
+            onehot = pd.get_dummies(df["Support"], prefix="support_onehot").astype(int)
+            df = pd.concat([df, onehot], axis=1)
+            feature_cols += list(onehot.columns)
+    return df, feature_cols
 
 
 def get_model_name(feature_set, augmentation):
@@ -489,6 +510,7 @@ def main(
                             f"Columns {missing} for feature set {feature_set} not found in the data "
                             "(use a dataset built with src/data_scripts/build_updated_descriptor_data.py)"
                         )
+                    _df, feature_cols = add_computed_descriptors(_df, feature_cols, feature_set)
                 elif feature_set == "base+atom_numbers+support":
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
                 elif feature_set == "all":  # all features
@@ -784,7 +806,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'optical_basicity', 'support_types') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'optical_basicity', 'support_types', 'xenonpy_support', 'support_onehot') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
     )
     parser.add_argument(
         "--augmentations",
