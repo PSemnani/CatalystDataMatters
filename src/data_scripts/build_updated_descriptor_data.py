@@ -12,8 +12,8 @@ Corrections of the original data:
 
 Missing values, i.e. the descriptors of empty metal sites ("n.a."), the support descriptors
 of catalysts without support (blank), and the optical basicity of non-oxidic supports, are
-NaN by default (handled by XGBoost). With --missing_value 0 they are set to 0 instead,
-similar to the previous version of the data.
+0 by default (as in the previous version of the data, usable by all models). With
+--missing_value nan they are NaN instead (handled by XGBoost, but not by all models).
 
 Descriptors of the metals M1/M2/M3, all elemental data from pymatgen:
 - electronegativity: Pauling electronegativity.
@@ -64,7 +64,7 @@ References:
     Electrochemical Society, 125(2), 228-232.
 
 Usage: python src/data_scripts/build_updated_descriptor_data.py [--csv Dataset/OCM-NguyenEtAl.csv]
-           [--missing_value 0]
+           [--missing_value nan]
 """
 import argparse
 from pathlib import Path
@@ -268,13 +268,13 @@ def main():
     parser.add_argument(
         "--missing_value",
         type=float,
-        default=float("nan"),
+        default=0.0,
         help="Value for missing descriptors (empty metal sites, no support, optical basicity of "
-        "non-oxides). Default: NaN; use 0 for a dataset similar to the previous version. For values "
-        "other than NaN, the output file name gets the suffix _missing<value>.",
+        "non-oxides). Default: 0; use nan to keep them missing. For values other than 0, the "
+        "output file name gets the suffix _missing<value> (e.g. _missingnan).",
     )
     args = parser.parse_args()
-    suffix = "" if np.isnan(args.missing_value) else f"_missing{args.missing_value:g}"
+    suffix = "" if args.missing_value == 0 else f"_missing{args.missing_value:g}"
     output_path = args.csv.with_name(f"{args.csv.stem}_with_descriptors_updated{suffix}.csv")
 
     df = pd.read_csv(args.csv)

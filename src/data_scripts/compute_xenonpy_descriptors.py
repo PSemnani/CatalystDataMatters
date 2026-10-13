@@ -12,13 +12,13 @@ For both, XenonPy computes the weighted average, weighted variance, maximum, and
 of 58 elemental properties (from XenonPy's completed element table, in which missing
 elemental data are imputed by XenonPy). Catalysts without active phase (bare supports,
 blank) or without support (blank) get a missing value for the respective descriptors:
-NaN by default (handled by XGBoost), or the value given with --missing_value (e.g. 0, as
-in the previous version of the table).
+0 by default (usable by all models), or the value given with --missing_value (e.g. nan,
+handled by XGBoost).
 
 Requires the "xenonpy" environment (xenonpy, pymatgen, rdkit) and the element data
 (from xenonpy.datatools import preset; preset.sync("elements_completed")).
 Usage: python src/data_scripts/compute_xenonpy_descriptors.py [--csv Dataset/OCM-NguyenEtAl.csv]
-           [--output Dataset/xenonpy_descriptors.csv] [--missing_value 0]
+           [--output Dataset/xenonpy_descriptors.csv] [--missing_value nan]
 """
 import argparse
 from pathlib import Path
@@ -78,7 +78,7 @@ def support_composition(support):
     return Composition(SUPPORT_FORMULAS.get(support, support)).fractional_composition
 
 
-def featurize(compositions, prefix, missing_value=np.nan):
+def featurize(compositions, prefix, missing_value=0.0):
     """Featurize a Series of compositions (None for missing ones, which get missing_value)."""
     calculator = Compositions(featurizers=FEATURIZERS, n_jobs=1)
     present = compositions.dropna()
@@ -97,13 +97,13 @@ def main():
                         help="Path to the original data (default: Dataset/OCM-NguyenEtAl.csv)")
     parser.add_argument("--output", type=Path, default=None,
                         help="Path of the output table (default: Dataset/xenonpy_descriptors.csv, "
-                        "with the suffix _missing<value> for a missing value other than NaN)")
-    parser.add_argument("--missing_value", type=float, default=float("nan"),
+                        "with the suffix _missing<value> for a missing value other than 0, e.g. _missingnan)")
+    parser.add_argument("--missing_value", type=float, default=0.0,
                         help="Value for the descriptors of a missing active phase or support "
-                        "(default: NaN; use 0 for the previous version of the table)")
+                        "(default: 0; use nan to keep them missing)")
     args = parser.parse_args()
     if args.output is None:
-        suffix = "" if np.isnan(args.missing_value) else f"_missing{args.missing_value:g}"
+        suffix = "" if args.missing_value == 0 else f"_missing{args.missing_value:g}"
         args.output = Path(f"Dataset/xenonpy_descriptors{suffix}.csv")
 
     df = pd.read_csv(args.csv)
