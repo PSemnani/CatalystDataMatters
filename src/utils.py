@@ -272,6 +272,10 @@ def release_lock(lock_path: Path):
 
 def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
     """Get one-hot encoding for specified columns in a DataFrame.
+        The metal site columns (M1, M2, M3 in ATOM_NUMBERS) are encoded with the same
+        categories (all elements occurring in any site), such that every element has a
+        column for every site (e.g. M1_atom_number_25, M2_atom_number_25,
+        M3_atom_number_25) and the sites can be permuted for data augmentation.
 
     Args:
         df (pd.DataFrame): The input DataFrame.
@@ -281,6 +285,11 @@ def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
         pd.DataFrame: A new DataFrame with one-hot encoded columns that also contains
             all columns not in column_names in the same format as before.
     """
+    df = df.copy()
+    site_cols = [col for col in column_names if col in ATOM_NUMBERS]
+    all_elements = sorted(set().union(*(df[col].unique() for col in site_cols)))
+    for col in site_cols:
+        df[col] = pd.Categorical(df[col], categories=all_elements)
     return pd.get_dummies(df, columns=column_names, drop_first=False)
 
 
