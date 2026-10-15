@@ -21,6 +21,7 @@ from utils import (
     scatter_mean,
     get_cross_validation_masks,
     settings_to_filename_map,
+    save_results_csv,
 )
 
 
@@ -305,10 +306,7 @@ def main(
                         }
     results_df = pd.DataFrame(results_rows)
     summary_path = results_path / "training_results.csv"
-    if summary_path.exists():
-        results_df.to_csv(summary_path, mode="a", header=False, index=False)
-    else:
-        results_df.to_csv(summary_path, index=False)
+    save_results_csv(results_df, summary_path)
     print("All experiments completed.")
 
 
