@@ -37,6 +37,9 @@ Dataset/OCM-NguyenEtAl*.csv
 # hidden folders with additional results
 **/.additional*
 
+# cluster submission scripts
+/submission/
+
 # ── macOS ─────────────────────────────────────────────────────────────────────
 .DS_Store
 .AppleDouble
