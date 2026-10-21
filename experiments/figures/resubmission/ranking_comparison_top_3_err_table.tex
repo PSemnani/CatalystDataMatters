@@ -1,0 +1,28 @@
+\begin{table}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccccc}
+\toprule
+Split Strategy & Condition & Top-3 Acc. (\%) & $p$-value & 95\% CI (\%) & EF@3 & Regret & Regret (\%) \\
+\midrule
+\multirow{1}{*}{Catalyst Split} & All & 45.7 $\pm$ 21.4 & $<0.001$ & [39.9, 51.5] & 1.5 & 3.0 $\pm$ 1.7 & 17.4 $\pm$ 9.9 \\
+\cmidrule{1-8}
+\multirow{7}{*}{\shortstack{Leave one\\Temperature\\Out}} & 700°C & 59.7 $\pm$ 23.7 & $<0.001$ & [53.9, 65.3] & 2.0 & 0.8 $\pm$ 0.7 & 8.8 $\pm$ 7.3 \\
+ & 750°C & 73.7 $\pm$ 20.7 & $<0.001$ & [68.3, 78.6] & 2.5 & 0.6 $\pm$ 0.7 & 4.1 $\pm$ 4.7 \\
+ & 775°C & 82.7 $\pm$ 18.5 & $<0.001$ & [77.9, 86.8] & 2.8 & 0.3 $\pm$ 0.4 & 1.8 $\pm$ 2.5 \\
+ & 800°C & 83.3 $\pm$ 16.7 & $<0.001$ & [78.6, 87.4] & 2.8 & 0.4 $\pm$ 0.5 & 2.2 $\pm$ 2.9 \\
+ & 850°C & 68.7 $\pm$ 21.0 & $<0.001$ & [63.1, 73.9] & 2.3 & 0.9 $\pm$ 0.9 & 6.6 $\pm$ 6.7 \\
+ & 900°C & 52.3 $\pm$ 23.2 & $<0.001$ & [46.5, 58.1] & 1.7 & 0.5 $\pm$ 0.4 & 6.8 $\pm$ 6.7 \\
+ & All & 70.1 $\pm$ 23.7 & $<0.001$ & [67.9, 72.2] & 2.3 & 0.6 $\pm$ 0.7 & 5.0 $\pm$ 6.0 \\
+\cmidrule{1-8}
+\multirow{5}{*}{\shortstack{Leave one\\CH4/O2 Ratio\\Out}} & 2 & 89.7 $\pm$ 16.1 & $<0.001$ & [85.7, 92.9] & 3.0 & 0.1 $\pm$ 0.2 & 0.5 $\pm$ 1.1 \\
+ & 3 & 91.0 $\pm$ 14.8 & $<0.001$ & [87.2, 94.0] & 3.0 & 0.1 $\pm$ 0.1 & 0.4 $\pm$ 0.8 \\
+ & 4 & 90.0 $\pm$ 15.3 & $<0.001$ & [86.0, 93.2] & 3.0 & 0.1 $\pm$ 0.2 & 0.6 $\pm$ 1.3 \\
+ & 6 & 80.0 $\pm$ 20.0 & $<0.001$ & [75.0, 84.4] & 2.7 & 0.2 $\pm$ 0.5 & 1.8 $\pm$ 3.4 \\
+ & All & 87.7 $\pm$ 17.3 & $<0.001$ & [85.7, 89.5] & 2.9 & 0.1 $\pm$ 0.3 & 0.8 $\pm$ 2.0 \\
+\bottomrule
+\end{tabular}
+}
+\caption{\new{Mean and standard deviation (across seeds) of top-3 ranking accuracy (Top-3 Acc.), significance vs.\ 30\% random-chance baseline ($p$-value), 95\% confidence interval (CI), enrichment factor (EF@3) over the random baseline, and mean and standard deviation (across seeds) of regret (the amount of yield lost per catalyst when choosing the predicted top-3 instead of the true top-3 (Regret), also expressed as a percentage of the true top-3 yield (Regret (\%))) for catalyst-based and condition-based split strategies.}}
+\label{tab:ranking_comparison_top_3}
+\end{table}
