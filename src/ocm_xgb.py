@@ -1,5 +1,6 @@
 import random
 import argparse
+import sys
 from pathlib import Path
 from joblib import dump
 from time import time
@@ -648,6 +649,8 @@ def main(
                     )
                     for k, v in ranking_performance.items():
                         print(f"{k}: {v:.4f}")
+                    # write the buffered output to the log (shows the progress of cluster jobs)
+                    sys.stdout.flush()
                     # compute SHAP values
                     shap_cols = {}
                     if compute_shap:
