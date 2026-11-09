@@ -1,0 +1,38 @@
+Setting: xgboost, base+descriptors, augmentation=yes, 49 training / 10 test catalysts, 100 seeds
+Random-split MAE: 0.72 (20 seeds)
+Held-out entries with both an unseen support and an unseen metal: 0
+
+46 loaded catalysts -> 52 catalyst-tier entries
+  T0: n=17  mean=2.00  range=1.07-4.09
+  T1: n=11  mean=2.21  range=1.57-3.26
+  T2: n=24  mean=2.06  range=1.12-3.72
+Catalysts in more than one tier (MAE, folds):
+  Mn-K2MoO4/SiO2: T0 1.64 (14), T2 2.56 (5)
+  Mn-K2WO4/SiO2: T0 2.32 (19), T2 2.86 (5)
+  Mn-Li2MoO4/SiO2: T0 1.85 (13), T2 1.93 (5)
+  Mn-Li2WO4/SiO2: T0 1.45 (12), T2 1.36 (5)
+  Mn-ZnMoO4/SiO2: T0 1.76 (15), T2 2.45 (1)
+  Zn-Na2WO4/SiO2: T0 1.07 (15), T2 1.15 (1)
+Entries based on fewer than 3 folds: Zn-Na2WO4/SiO2 T2 (1), Mn-ZnMoO4/SiO2 T2 (1)
+
+Tier comparisons on catalyst-tier entries:
+  T0 vs T2: Welch p = 0.80, Mann-Whitney p = 0.78
+  T0 vs T1: Welch p = 0.39, Mann-Whitney p = 0.16
+  T1 vs T2: Welch p = 0.50, Mann-Whitney p = 0.47
+
+Per-catalyst MAE (mean over its folds), averaged over catalysts:
+  unloaded materials         n=13  MAE=1.50
+  loaded catalysts           n=46  MAE=2.09
+  loaded, with Mn            n=26  MAE=2.10
+  loaded, without Mn         n=20  MAE=2.07
+  loaded, on SiO2            n=35  MAE=2.05
+  loaded, other supports     n=11  MAE=2.21
+
+Component frequencies (number of catalysts):
+  metals: W 38, Na 33, Mn 26, Mo 7, Li 2, K 2, Fe 2, Zn 2, Y 1, Tb 1, Eu 1, Nd 1, Ce 1, La 1, Pd 1, Zr 1, V 1, Cu 1, Ni 1, Co 1, Ti 1, Ba 1, Sr 1, Ca 1, Mg 1, Hf 1
+  metals in exactly one catalyst: 18
+  supports, all catalysts: {'SiO2': 36, 'BN': 2, 'MgO': 2, 'Al2O3': 2, 'SiC': 2, 'SiCnf': 2, 'BEA': 2, 'ZSM-5': 2, 'TiO2': 2, 'ZrO2': 2, 'Nb2O5': 2, 'CeO2': 2, 'n.a.': 1}
+  supports, loaded catalysts: {'SiO2': 35, 'BN': 1, 'MgO': 1, 'Al2O3': 1, 'SiC': 1, 'SiCnf': 1, 'BEA': 1, 'ZSM-5': 1, 'TiO2': 1, 'ZrO2': 1, 'Nb2O5': 1, 'CeO2': 1}
+
+T2 entries whose unseen metal occurs in no other catalyst, by MAE:
+  Zr-Na2WO4/SiO2 1.12, La-Na2WO4/SiO2 1.26, Mn-BaWO4/SiO2 1.27, Ce-Na2WO4/SiO2 1.28, Tb-Na2WO4/SiO2 1.29, Eu-Na2WO4/SiO2 1.46, Nd-Na2WO4/SiO2 1.49, Hf-Na2WO4/SiO2 1.60, Co-Na2WO4/SiO2 1.85, Mn-SrWO4/SiO2 2.10, Y-Na2WO4/SiO2 2.41, Ni-Na2WO4/SiO2 2.44, Pd-Na2WO4/SiO2 2.47, Mn-CaWO4/SiO2 2.49, Ti-Na2WO4/SiO2 2.82, Cu-Na2WO4/SiO2 3.04, Mn-MgWO4/SiO2 3.11, V-Na2WO4/SiO2 3.72
