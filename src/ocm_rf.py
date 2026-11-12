@@ -12,7 +12,6 @@ from utils import (
     SUPPORT,
     DESCRIPTORS,
     CONDITIONS_TEMP_SINGLE,
-    CONDITIONS_TEMP_PAIRS,
     CONDITIONS_CH4_O2_RATIO,
     get_cross_validation_param_sets,
     scale_data,
@@ -164,7 +163,7 @@ def main(
     cross_val_params=50,
     conditions={},
     folder_name=None,
-    feature_sets=["base+atom_numbers+support", "base+descriptors", "all"],
+    feature_sets=["base+descriptors"],
     augmentations=[True, False],
 ):
     df = pd.read_csv(data_path)
@@ -197,8 +196,6 @@ def main(
                     feature_cols = BASE_PROCESS + DESCRIPTORS
                 elif feature_set == "base+atom_numbers+support":
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
-                elif feature_set == "all":
-                    feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
                 else:
                     raise ValueError(f"Invalid feature set: {feature_set}")
                 target_col = "C2y"
@@ -359,14 +356,14 @@ if __name__ == "__main__":
         "--conditions",
         type=str,
         default="None",
-        help="Conditions to include in the model. Choose from 'None', 'temp_single', 'temp_pairs', 'ch4_o2_ratio'.",
+        help="Conditions to include in the model. Choose from 'None', 'temp_single', 'ch4_o2_ratio'.",
     )
     parser.add_argument(
         "--feature_sets",
         type=str,
         nargs="+",
-        default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (default: all three sets)",
+        default=["base+descriptors"],
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors') (default: base+descriptors)",
     )
     parser.add_argument(
         "--augmentations",
@@ -407,8 +404,6 @@ if __name__ == "__main__":
         conditions = {"": {}}
     elif args.conditions == "temp_single":
         conditions = CONDITIONS_TEMP_SINGLE
-    elif args.conditions == "temp_pairs":
-        conditions = CONDITIONS_TEMP_PAIRS
     elif args.conditions == "ch4_o2_ratio":
         conditions = CONDITIONS_CH4_O2_RATIO
     else:

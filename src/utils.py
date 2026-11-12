@@ -46,26 +46,6 @@ DESCRIPTORS = [
     "M3_oxidation_state",
     "support_surface_area",
 ]
-# additional metal site descriptors (see src/data_scripts/build_updated_descriptor_data.py)
-INVERSE_SECOND_IONIZATION = [
-    "M1_inverse_second_ionization",
-    "M2_inverse_second_ionization",
-    "M3_inverse_second_ionization",
-]
-MULLIKEN_ELECTRONEGATIVITY = [
-    "M1_mulliken_electronegativity",
-    "M2_mulliken_electronegativity",
-    "M3_mulliken_electronegativity",
-]
-# one-hot encoded material class of the support (see src/data_scripts/build_updated_descriptor_data.py)
-SUPPORT_TYPES = [
-    "support_class_oxide",
-    "support_class_zeolite",
-    "support_class_carbide",
-    "support_class_nitride",
-    "support_class_none",
-]
-
 CONDITIONS_TEMP_SINGLE = {
     "700": {"Temp": {"==": 700}},
     "750": {"Temp": {"==": 750}},
@@ -73,11 +53,6 @@ CONDITIONS_TEMP_SINGLE = {
     "800": {"Temp": {"==": 800}},
     "850": {"Temp": {"==": 850}},
     "900": {"Temp": {"==": 900}},
-}
-CONDITIONS_TEMP_PAIRS = {
-    "700&750": {"Temp": {">=": 700, "<=": 750}},
-    "775&800": {"Temp": {">=": 775, "<=": 800}},
-    "850&900": {"Temp": {">=": 850, "<=": 900}},
 }
 CONDITIONS_CH4_O2_RATIO = {
     "2": {"CH4/O2": {"==": 2}},
@@ -141,20 +116,10 @@ settings_to_filename_map = {
     ("base+descriptors", True): "ba",
     ("base+atom_numbers+support", False): "n",
     ("base+atom_numbers+support", True): "na",
-    ("all", False): "a",
-    ("all", True): "aa",
     ("one_hot", False): "oh",
     ("one_hot", True): "oha",
     ("invariant", False): "inv",
     ("xenonpy", False): "xp",
-    ("xenonpy_active", False): "xpact",
-    ("composition_descriptors", False): "cd",
-    ("unique", True): "aa+u",
-    ("non_unique", True): "aa+nu",
-    ("threshold", True): "aa+thresh",
-    ("top_6", True): "aa+top6",
-    ("weighted_mean", True): "aa+wmean",
-    ("mean", True): "aa+mean",
 }
 
 
@@ -353,106 +318,19 @@ def get_invariant_embedding(df):
     return invariant_df
 
 
-def get_composition_descriptors(
-    df, descriptor_cols=DESCRIPTORS, sites=("M1", "M2", "M3")
-):
-    """Get permutation invariant composition descriptors by aggregating the per-site
-        descriptors of the metals (e.g. M1_electronegativity, M2_electronegativity,
-        M3_electronegativity) over the sites, similar to the compositional descriptors
-        of XenonPy. For each property, the average and variance weighted with M1_mol%,
-        M2_mol%, M3_mol% as well as the minimum and maximum over the occupied sites are
-        computed.
-        Empty sites (mol% of 0) are ignored. Catalysts without any metal (bare supports,
-        blank) get the value that the data contains for the descriptors of their empty
-        sites (e.g. NaN or 0, depending on how missing values are encoded in the dataset).
-        For example, a data point with M1_electronegativity=1.55, M2_electronegativity=0.93,
-        and M3_electronegativity=1.7 with concentrations 40, 40, and 20 mol%, respectively,
-        gets comp_ave_electronegativity=1.332, comp_var_electronegativity=0.1107,
-        comp_min_electronegativity=0.93, and comp_max_electronegativity=1.7.
-
-    Args:
-        df (pd.DataFrame): The input DataFrame.
-        descriptor_cols (list): List of descriptor columns (default: DESCRIPTORS). Per-site
-            columns (starting with one of the site prefixes) are aggregated, all other
-            columns (e.g. support_surface_area) are kept as they are.
-        sites (tuple): Prefixes of the metal sites (default: ("M1", "M2", "M3")).
-
-    Returns:
-        pd.DataFrame: A new DataFrame with the aggregated descriptors that also contains
-            all columns except for the per-site descriptors and M1_mol%, M2_mol%, M3_mol%.
-    """
-    site_prefixes = tuple(f"{site}_" for site in sites)
-    site_descriptor_cols = [
-        col for col in descriptor_cols if col.startswith(site_prefixes)
-    ]
-    # properties that are given for all sites, e.g. "electronegativity"
-    properties = [
-        col[len(site_prefixes[0]) :]
-        for col in site_descriptor_cols
-        if col.startswith(site_prefixes[0])
-        and all(
-            f"{prefix}{col[len(site_prefixes[0]):]}" in site_descriptor_cols
-            for prefix in site_prefixes
-        )
-    ]
-    mol_cols = [f"{site}_mol%" for site in sites]
-    weights = df[mol_cols].to_numpy(dtype=float)
-    occupied = weights > 0
-    total = weights.sum(axis=1)
-    has_metals = total > 0
-
-    composition_df = pd.DataFrame(index=df.index)
-    for prop in properties:
-        values = df[[f"{prefix}{prop}" for prefix in site_prefixes]].to_numpy(
-            dtype=float
-        )
-        # ignore the values of empty sites (which may be NaN, since 0 * NaN = NaN)
-        # value used in the data for empty sites (for catalysts without any metal)
-        missing_value = values[:, 0]
-        values = np.where(occupied, values, 0.0)
-        weighted_ave = (weights * values).sum(axis=1) / np.where(has_metals, total, 1)
-        # same definition as WeightedVariance in XenonPy: sum_i w_i * (x_i - weighted_ave)^2
-        weighted_var = (weights * (values - weighted_ave[:, None]) ** 2).sum(
-            axis=1
-        ) / np.where(has_metals, total, 1)
-        composition_df[f"comp_ave_{prop}"] = np.where(has_metals, weighted_ave, missing_value)
-        composition_df[f"comp_var_{prop}"] = np.where(has_metals, weighted_var, missing_value)
-        composition_df[f"comp_min_{prop}"] = np.where(
-            has_metals, np.where(occupied, values, np.inf).min(axis=1), missing_value
-        )
-        composition_df[f"comp_max_{prop}"] = np.where(
-            has_metals, np.where(occupied, values, -np.inf).max(axis=1), missing_value
-        )
-
-    # Prepend all columns except for the per-site descriptors and mol% to the composition_df
-    other_cols = [
-        col for col in df.columns if col not in site_descriptor_cols + mol_cols
-    ]
-    composition_df = pd.concat([df[other_cols], composition_df], axis=1)
-
-    return composition_df
-
-
 # table with the XenonPy descriptors of every catalyst (see src/data_scripts/compute_xenonpy_descriptors.py)
 XENONPY_DESCRIPTORS_PATH = Path(__file__).resolve().parent.parent / "Dataset" / "xenonpy_descriptors.csv"
 
 
-def get_xenonpy_descriptors(
-    df, include_support=True, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name", include_active=True
-):
+def get_xenonpy_descriptors(df, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name"):
     """Get the XenonPy compositional descriptors of the active phase (columns xp_active_*)
-        and/or of the support (columns xp_support_*) for every row of a DataFrame.
+        and of the support (columns xp_support_*) for every row of a DataFrame.
         The descriptors are loaded from a table with one row per catalyst, which is computed
         with src/data_scripts/compute_xenonpy_descriptors.py (requires a separate environment),
         and matched to the rows by the catalyst name.
 
     Args:
         df (pd.DataFrame): The input DataFrame.
-        include_support (bool): Whether to include the descriptors of the support
-            (default: True).
-        include_active (bool): Whether to include the descriptors of the active phase
-            (default: True). E.g. include_active=False and include_support=True only adds
-            the descriptors of the support.
         path (str or Path): Path to the table with the XenonPy descriptors
             (default: Dataset/xenonpy_descriptors.csv in the repository).
         catalyst_name_column (str): The name of the column containing catalyst names in df
@@ -463,12 +341,7 @@ def get_xenonpy_descriptors(
             (same index and row order as df).
     """
     descriptors = pd.read_csv(path, float_precision="round_trip").set_index(catalyst_name_column)
-    prefixes = tuple(
-        prefix for prefix, include in [("xp_active_", include_active), ("xp_support_", include_support)] if include
-    )
-    if not prefixes:
-        raise ValueError("At least one of include_active and include_support has to be True.")
-    descriptors = descriptors[[col for col in descriptors.columns if col.startswith(prefixes)]]
+    descriptors = descriptors[[col for col in descriptors.columns if col.startswith(("xp_active_", "xp_support_"))]]
     missing = set(df[catalyst_name_column]) - set(descriptors.index)
     if missing:
         raise ValueError(f"No XenonPy descriptors found in {path} for catalysts: {sorted(missing)}")

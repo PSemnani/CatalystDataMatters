@@ -1,164 +1,180 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
-OCM – append five Mendeleev descriptors for M1 / M2 / M3
-========================================================
-Descriptors
------------
-1) electronegativity         (Pauling χ)
-2) ionic_radius              (Å, radius of the ion with |charge| max)
-3) oxidation_state           (maximum oxidation state)
-4) d_electron_count          (ground-state d occupancy)
-5) inverse_ionization        (1 / first ionisation energy, eV⁻¹)
+Build the OCM dataset with descriptors of the metals and the support from the original
+data (Dataset/OCM-NguyenEtAl.csv) and store it as <input>_with_descriptors.csv next to
+the input file.
 
-© 2025 – minimalist, debug-friendly version
+Corrections of the original data:
+- M1/M2/M3_mol%: catalysts with different metal compositions in different rows are
+  set to the composition that is consistent with the ratio of the metal loadings
+  M2_mol / M3_mol. In the original data (as of Oct. 1, 2026), Mn-MgWO4, Mn-CaWO4,
+  Mn-SrWO4, Mn-BaWO4, Mn-FeMoO4, and Mn-ZnMoO4 (on SiO2) have 40/40/20 mol% at
+  700-850 C instead of 50/25/25 mol% (as at 900 C and in line with their loadings).
+  This might be fixed in future updates of the data set; catalysts with a consistent
+  composition are left unchanged, so the result is the same for corrected data.
+
+Missing values, i.e. the descriptors of empty metal sites ("n.a.") and the support surface
+area of the catalyst without support (blank), are 0 by default (usable by all models). With
+--missing_value nan they are NaN instead (handled by XGBoost, but not by all models).
+
+Descriptors of the metals M1/M2/M3, all elemental data from pymatgen:
+- electronegativity: Pauling electronegativity.
+- ionic_radius: Shannon radius (in pm) for coordination number 6 (CN VI) at the
+  oxidation state below. If radii are given for several spin states (e.g. Fe3+, Co3+),
+  the high spin radius is used.
+- oxidation_state: highest common oxidation state of the element.
+- d_electron_count: number of d electrons outside the noble-gas core of the neutral
+  atom in its ground state, e.g. 1 for Y ([Kr] 4d1 5s2).
+- inverse_ionization: 1 / first ionization energy (in 1/eV).
+Support:
+- support_surface_area: BET surface areas (in m2/g) of the bare supports as reported
+  in Table 1 of the original publication of the data [1]. For the SiC nanofibers (SiCnf),
+  no value is reported; a geometric lower bound is estimated from the manufacturer's
+  specifications [2] (D < 2.5 um, L/D >= 20, rho = 3.22 g/cm3) for long, dense and smooth
+  cylinders, SSA = 4 / (rho * D) ~ 0.5 m2/g for D = 2.5 um (the neglected end faces would
+  contribute at most 2.5 % for L/D >= 20).
+
+References:
+[1] Nguyen, T. N., Nhat, T. T. P., Takimoto, K., Thakur, A., Nishimura, S., Ohyama, J.,
+    ... & Taniike, T. (2020). High-throughput experimentation and catalyst informatics
+    for oxidative coupling of methane. ACS Catalysis, 10(2), 921-932.
+[2] Sigma-Aldrich. Silicon carbide, nanofiber, D <2.5 um, L/D >= 20, 98% trace metals
+    basis, Product No. 776742. https://www.sigmaaldrich.com/product/aldrich/776742
+    (accessed 2026-10-28).
+
+Usage: python src/data_scripts/build_descriptor_data.py [--csv Dataset/OCM-NguyenEtAl.csv]
+           [--missing_value nan]
 """
-
-from __future__ import annotations
 import argparse
-import re
-import sys
 from pathlib import Path
-from typing import Dict
 
+import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from mendeleev import element
+from pymatgen.core import Element, Species
 
-# ─── Descriptor keys ───────────────────────────────────────────────────────────
+SITES = ["M1", "M2", "M3"]
+EMPTY_SITE = "n.a."
 DESC_KEYS = (
-    "electronegativity",  # pauling
+    "electronegativity",
     "ionic_radius",
-    "oxidation_state",  # max oxidation state
+    "oxidation_state",
     "d_electron_count",
     "inverse_ionization",
 )
-ZERO_DICT = {k: 0.0 for k in DESC_KEYS}
-
-# Support surface areas (m2/g)
+# coordination number for the Shannon radii
+CN = "VI"
+# BET surface areas (m2/g) of the bare supports from the original publication
 SUPPORT_SURFACE_AREAS = {
-    "Al2O3": 413.0,
-    "BEA": 512.0,
-    "BN": 1513.0,
-    "CeO2": 102.0,
-    "MgO": 194.0,
-    "Nb2O5": 0.0,
-    "SiC": 22.0,
-    "SiCnf": 124.0,
-    "SiO2": 350.0,
-    "TiO2": 417.0,
-    "ZSM-5": 285.0,
-    "ZrO2": 37.0,
-    "n.a.": 0.0,  # no support (blank)
+    "BN": 5.2,
+    "MgO": 5.5,
+    "Al2O3": 150.0,  # gamma-Al2O3
+    "SiO2": 650.0,  # silica gel 60N
+    "SiC": 1.5,
+    "SiCnf": 0.5,  # not reported, geometric lower bound for D < 2.5 um, L/D >= 20 (see above)
+    "BEA": 560.0,
+    "ZSM-5": 300.0,
+    "TiO2": 17.4,
+    "ZrO2": 3.2,
+    "Nb2O5": 4.7,
+    "CeO2": 3.9,
+    "n.a.": None,  # no support (blank)
 }
 
 
-def descriptors(sym: str) -> Dict[str, float]:
-    """
-    Return the five descriptors for `sym`.
-    On ANY problem -> all zeros (never raises).
-    """
-    if sym in ("n.a.", "nan", "NaN", None) or sym != sym:
-        return ZERO_DICT.copy()
-
-    try:
-        el = element(sym.strip().capitalize())
-
-        # 1) electronegativity (Pauling χ)
-        chi = el.en_pauling or 0.0
-
-        # 2) ionic radius (Å)
-        rad = 0.0
-        if el.ionic_radii:
-            # charge attribute renamed to ion_charge in ≥0.15
-            best = max(
-                el.ionic_radii,
-                key=lambda r: abs(getattr(r, "ion_charge", getattr(r, "charge", 0))),
+def fix_mol_fractions(df):
+    """Set the mol% of catalysts with different compositions in different rows to
+    the composition whose M2:M3 ratio is consistent with the loadings M2_mol:M3_mol."""
+    df = df.copy()
+    mol_cols = [f"{site}_mol%" for site in SITES]
+    for name, group in df.groupby("Name"):
+        compositions = group[mol_cols].drop_duplicates()
+        if len(compositions) == 1:
+            continue
+        loadings = group[["M2_mol", "M3_mol"]].drop_duplicates()
+        if len(loadings) != 1:
+            raise ValueError(f"{name}: different metal loadings in different rows")
+        m2_load, m3_load = loadings.iloc[0]
+        consistent = compositions[
+            np.isclose(
+                compositions["M2_mol%"] * m3_load,
+                compositions["M3_mol%"] * m2_load,
+                rtol=0.05,
             )
-            # radius attribute renamed to ionic_radius; crystal_radius is a fallback
-            rad = getattr(best, "ionic_radius", None)
-            if rad is None:
-                rad = getattr(best, "crystal_radius", 0.0)
-
-        # 3) maximum oxidation state
-        ox = max(el.oxistates) if el.oxistates else 0.0
-
-        # 4) d-electron count
-        # 4) d-electron count
-        d_cnt = 0.0
-
-        # (A) Preferred: API method if available
-        try:
-            if hasattr(el, "ec") and hasattr(el.ec, "get_subshell_occupancy"):
-                d_val = el.ec.get_subshell_occupancy("d")
-                if d_val is not None:
-                    d_cnt = float(d_val)
-        except Exception:
-            pass
-
-        # (B) If still zero, parse conf tuples (len 2 or 3, labels may be '3d', '4d', etc.)
-        if d_cnt == 0.0 and hasattr(el, "ec") and hasattr(el.ec, "conf"):
-            try:
-                for item in el.ec.conf:
-                    subshell, electrons = item[
-                        -2:
-                    ]  # last two entries are label & count
-                    if isinstance(subshell, str) and "d" in subshell:
-                        d_cnt = float(electrons)
-                        break
-            except Exception:
-                pass
-
-        # (C) Last fallback: regex from a string representation
-        if d_cnt == 0.0:
-            cfg = ""
-            if hasattr(el, "ec") and hasattr(el.ec, "conf_str"):
-                cfg = el.ec.conf_str or ""
-            elif hasattr(el, "econf"):
-                cfg = str(el.econf)  # sometimes a dict, sometimes a string
-            if cfg:
-                import re
-
-                m = re.findall(r"d(\d+)", cfg)
-                if m:
-                    d_cnt = float(m[-1])
-
-        # 5) inverse first ionization energy
-        ie1 = el.ionenergies.get(1, 0)
-        inv_ie = 1.0 / ie1 if ie1 else 0.0
-
-        return {
-            "electronegativity": chi,
-            "ionic_radius": rad,
-            "oxidation_state": ox,
-            "d_electron_count": d_cnt,
-            "inverse_ionization": inv_ie,
-        }
-
-    except Exception as err:
-        print(f"[warn]   {sym}: {err}", file=sys.stderr)
-        return ZERO_DICT.copy()
+        ]
+        if len(consistent) != 1:
+            raise ValueError(
+                f"{name}: cannot determine the composition consistent with the loadings "
+                f"from {compositions.values.tolist()}"
+            )
+        composition = consistent.iloc[0]
+        mask = (df["Name"] == name) & (df[mol_cols] != composition.values).any(axis=1)
+        print(
+            f"{name}: mol% {df.loc[mask, mol_cols].drop_duplicates().values.tolist()} -> "
+            f"{composition.values.tolist()} ({mask.sum()} rows)"
+        )
+        df.loc[mask, mol_cols] = composition.values
+    return df
 
 
-def build_cache(symbols):
-    return {s: descriptors(str(s)) for s in symbols}
+def shannon_radius_pm(symbol, oxidation_state):
+    species = Species(symbol, oxidation_state)
+    try:
+        radius = species.get_shannon_radius(cn=CN, radius_type="ionic")
+    except KeyError:
+        # radii are given for several spin states: use high spin
+        radius = species.get_shannon_radius(cn=CN, spin="High Spin", radius_type="ionic")
+    return round(float(radius) * 100, 2)  # Angstrom -> pm
 
 
-def main(csv_path: Path):
-    df = pd.read_csv(csv_path)
+def valence_d_electron_count(symbol):
+    # d electrons outside the noble-gas core of the neutral atom, e.g. "[Kr].4d1.5s2" -> 1
+    subshells = Element(symbol).electronic_structure.split(".")[1:]
+    return float(sum(int(subshell.split("d")[1]) for subshell in subshells if "d" in subshell))
+
+
+def descriptors(symbol):
+    if symbol == EMPTY_SITE:
+        return {key: None for key in DESC_KEYS}
+    el = Element(symbol)
+    oxidation_state = max(el.common_oxidation_states)
+    return {
+        "electronegativity": float(el.X),
+        "ionic_radius": shannon_radius_pm(symbol, oxidation_state),
+        "oxidation_state": float(oxidation_state),
+        "d_electron_count": valence_d_electron_count(symbol),
+        "inverse_ionization": 1.0 / float(el.ionization_energies[0]),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        default=Path("Dataset/OCM-NguyenEtAl.csv"),
+        help="Path to the original data (default: Dataset/OCM-NguyenEtAl.csv, relative to the repository root)",
+    )
+    parser.add_argument(
+        "--missing_value",
+        type=float,
+        default=0.0,
+        help="Value for missing descriptors (empty metal sites, surface area of the blank). "
+        "Default: 0; use nan to keep them missing. For values other than 0, the output file "
+        "name gets the suffix _missing<value> (e.g. _missingnan).",
+    )
+    args = parser.parse_args()
+    suffix = "" if args.missing_value == 0 else f"_missing{args.missing_value:g}"
+    output_path = args.csv.with_name(f"{args.csv.stem}_with_descriptors{suffix}.csv")
+
+    df = pd.read_csv(args.csv)
     # the original file has a trailing space in the column name "Support "
     df.columns = df.columns.str.strip()
+    df = fix_mol_fractions(df)
 
-    # build cache of all M1/M2/M3 symbols
-    symbols = pd.unique(df[["M1", "M2", "M3"]].values.ravel())
-    cache = build_cache(symbols)
-
-    # append descriptor-columns
-    for idx, col in enumerate(("M1", "M2", "M3"), start=1):
-        base = f"M{idx}"
-        for k in DESC_KEYS:
-            new_col = f"{base}_{k}"
-            df[new_col] = df[col].map(lambda s, kk=k: cache.get(str(s), ZERO_DICT)[kk])
+    # append metal descriptors (M1_electronegativity, ..., M3_inverse_ionization)
+    cache = {symbol: descriptors(symbol) for symbol in pd.unique(df[SITES].values.ravel())}
+    for site in SITES:
+        for key in DESC_KEYS:
+            df[f"{site}_{key}"] = df[site].map(lambda symbol, key=key: cache[symbol][key])
 
     # append support surface area
     unknown = set(df["Support"]) - set(SUPPORT_SURFACE_AREAS)
@@ -166,39 +182,16 @@ def main(csv_path: Path):
         raise ValueError(f"No surface area given for supports: {unknown}")
     df["support_surface_area"] = df["Support"].map(SUPPORT_SURFACE_AREAS)
 
-    # show a quick preview
-    pd.set_option("display.max_columns", None, "display.max_rows", 8)
-    print(df.head())
+    # missing values (None/NaN) of the computed descriptors: NaN or the given value
+    descriptor_cols = [f"{site}_{key}" for site in SITES for key in DESC_KEYS] + ["support_surface_area"]
+    df[descriptor_cols] = df[descriptor_cols].astype(float)
+    if not np.isnan(args.missing_value):
+        df[descriptor_cols] = df[descriptor_cols].fillna(args.missing_value)
+    print(f"missing values: {int(df[descriptor_cols].isna().sum().sum())} NaN entries in the descriptors")
 
-    # save to a new CSV (works on Python <3.9)
-    out_csv = csv_path.with_name(f"{csv_path.stem}_with_descriptors{csv_path.suffix}")
-    df.to_csv(out_csv, index=False)
-    print(f"\nAugmented file → {out_csv.resolve()}")
-
-    # plot distributions
-    plt.figure(figsize=(10, 8))
-    for i, k in enumerate(DESC_KEYS, 1):
-        vals = pd.concat([df[f"M1_{k}"], df[f"M2_{k}"], df[f"M3_{k}"]])
-        plt.subplot(3, 2, i)
-        plt.hist(vals, bins=30, edgecolor="k")
-        plt.title(k.replace("_", " ").title())
-        plt.tight_layout()
-    plt.show()
+    df.to_csv(output_path, index=False)
+    print(f"Saved to {output_path}")
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    import argparse
-
-    ap = argparse.ArgumentParser(
-        description="Append 5 Mendeleev descriptors for M1/M2/M3"
-    )
-    ap.add_argument(
-        "--csv",
-        type=Path,
-        default=Path("Dataset/OCM-NguyenEtAl.csv"),
-        help="Path to CSV file (default: Dataset/OCM-NguyenEtAl.csv, relative to the repository root)",
-    )
-
-    args, _ = ap.parse_known_args()
-    main(args.csv)
+    main()

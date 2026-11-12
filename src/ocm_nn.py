@@ -332,9 +332,8 @@ def main(
         elif feature_set == "base+atom_numbers+support":
             feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
             file_identifier = ""
-        else:  # all features
-            feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
-            file_identifier = "all"
+        else:
+            raise ValueError(f"Invalid feature set: {feature_set}")
         target_col = "C2y"
         split_strategy = "catalyst"
 
@@ -464,8 +463,8 @@ if __name__ == "__main__":
         "--feature_sets",
         type=str,
         nargs="+",
-        default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (default: all three sets)",
+        default=["base+descriptors"],
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors') (default: base+descriptors)",
     )
     parser.add_argument(
         "--augmentations",

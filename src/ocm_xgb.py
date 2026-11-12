@@ -18,15 +18,10 @@ from utils import (
     ATOM_NUMBERS,
     SUPPORT,
     DESCRIPTORS,
-    INVERSE_SECOND_IONIZATION,
-    MULLIKEN_ELECTRONEGATIVITY,
-    SUPPORT_TYPES,
     CONDITIONS_TEMP_SINGLE,
-    CONDITIONS_TEMP_PAIRS,
     CONDITIONS_CH4_O2_RATIO,
     get_invariant_embedding,
     get_one_hot_encoding,
-    get_composition_descriptors,
     get_xenonpy_descriptors,
     get_cross_validation_param_sets,
     scale_data,
@@ -38,71 +33,11 @@ from utils import (
     settings_to_filename_map,
 )
 
-# additional descriptors that can be appended to the feature set base+descriptors with "+",
-# e.g. "base+descriptors+mulliken+band_center"
-BASE_DESCRIPTORS = "base+descriptors"
-ADDITIONAL_DESCRIPTORS = {
-    "second_ionization": INVERSE_SECOND_IONIZATION,
-    "mulliken": MULLIKEN_ELECTRONEGATIVITY,
-    "band_center": ["support_band_center"],
-    "optical_basicity": ["support_optical_basicity"],
-    "support_types": SUPPORT_TYPES,
-}
-# additional descriptors that are not columns of the data but computed when loading the data:
-# XenonPy descriptors of the support (see get_xenonpy_descriptors) and one-hot encoded supports
-COMPUTED_DESCRIPTORS = ["xenonpy_support", "support_onehot"]
-
-
-def is_descriptor_feature_set(feature_set):
-    return feature_set == BASE_DESCRIPTORS or feature_set.startswith(BASE_DESCRIPTORS + "+")
-
-
-def get_additional_descriptors(feature_set):
-    """Names of the additional descriptors appended to base+descriptors (e.g. ["mulliken"])."""
-    additional = [part for part in feature_set[len(BASE_DESCRIPTORS):].split("+") if part]
-    unknown = [part for part in additional if part not in ADDITIONAL_DESCRIPTORS and part not in COMPUTED_DESCRIPTORS]
-    if unknown:
-        raise ValueError(
-            f"Invalid additional descriptors {unknown} in feature set {feature_set} "
-            f"(choose from {list(ADDITIONAL_DESCRIPTORS) + COMPUTED_DESCRIPTORS})"
-        )
-    return additional
-
-
-def get_descriptor_feature_cols(feature_set):
-    """Feature columns of base+descriptors and the additional descriptors appended with "+"
-    that are columns of the data (computed descriptors are added by add_computed_descriptors)."""
-    feature_cols = BASE_PROCESS + DESCRIPTORS
-    for part in get_additional_descriptors(feature_set):
-        if part in ADDITIONAL_DESCRIPTORS:
-            feature_cols += [col for col in ADDITIONAL_DESCRIPTORS[part] if col not in feature_cols]
-    return feature_cols
-
-
-def add_computed_descriptors(df, feature_cols, feature_set):
-    """Add the computed descriptors of the feature set to the data and the feature columns."""
-    feature_cols = list(feature_cols)
-    for part in get_additional_descriptors(feature_set):
-        if part == "xenonpy_support":
-            # XenonPy descriptors of the support composition (without those of the active phase)
-            df = get_xenonpy_descriptors(df, include_active=False, include_support=True)
-            feature_cols += [col for col in df.columns if col.startswith("xp_support_")]
-        elif part == "support_onehot":
-            # one 0/1 column per support (incl. the blank), i.e. the identity of the support
-            onehot = pd.get_dummies(df["Support"], prefix="support_onehot").astype(int)
-            df = pd.concat([df, onehot], axis=1)
-            feature_cols += list(onehot.columns)
-    return df, feature_cols
-
-
 def get_model_name(feature_set, augmentation):
     """Short name of a feature set and augmentation setting (used for stored models)."""
-    if (feature_set, augmentation) in settings_to_filename_map:
-        return settings_to_filename_map[(feature_set, augmentation)]
-    if is_descriptor_feature_set(feature_set):
-        base_name = settings_to_filename_map[(BASE_DESCRIPTORS, augmentation)]
-        return "+".join([base_name] + get_additional_descriptors(feature_set))
-    raise ValueError(f"No model name defined for feature set {feature_set}")
+    if (feature_set, augmentation) not in settings_to_filename_map:
+        raise ValueError(f"No model name defined for feature set {feature_set}")
+    return settings_to_filename_map[(feature_set, augmentation)]
 
 
 def train_xgboost(
@@ -431,7 +366,7 @@ def main(
     cross_val_params=50,
     conditions={},
     folder_name=None,
-    feature_sets=["base+atom_numbers+support", "base+descriptors", "all"],
+    feature_sets=["base+descriptors"],
     augmentations=[True, False],
     store_plots=False,
     store_models=False,
@@ -502,20 +437,10 @@ def main(
             for j, feature_set in enumerate(feature_sets):
                 _df = df
                 # run experiments per feature set
-                if is_descriptor_feature_set(feature_set):
-                    # base+descriptors, optionally with additional descriptors appended with "+"
-                    feature_cols = get_descriptor_feature_cols(feature_set)
-                    missing = [col for col in feature_cols if col not in df.columns]
-                    if missing:
-                        raise ValueError(
-                            f"Columns {missing} for feature set {feature_set} not found in the data "
-                            "(use a dataset built with src/data_scripts/build_updated_descriptor_data.py)"
-                        )
-                    _df, feature_cols = add_computed_descriptors(_df, feature_cols, feature_set)
+                if feature_set == "base+descriptors":
+                    feature_cols = BASE_PROCESS + DESCRIPTORS
                 elif feature_set == "base+atom_numbers+support":
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
-                elif feature_set == "all":  # all features
-                    feature_cols = BASE_PROCESS + ATOM_NUMBERS + DESCRIPTORS + SUPPORT
                 elif feature_set in ["one_hot", "invariant"]:
                     feature_cols = BASE_PROCESS + ATOM_NUMBERS + SUPPORT
                     _df = df[feature_cols + ["C2y", "Name"]]
@@ -526,22 +451,11 @@ def main(
                     feature_cols = [
                         col for col in _df.columns if col not in ["C2y", "Name"]
                     ]
-                elif feature_set == "composition_descriptors":
-                    feature_cols = BASE_PROCESS + DESCRIPTORS
-                    _df = df[feature_cols + ["C2y", "Name"]]
-                    _df = get_composition_descriptors(_df)
-                    feature_cols = [
-                        col for col in _df.columns if col not in ["C2y", "Name"]
-                    ]
-
-                elif feature_set in ["xenonpy", "xenonpy_active"]:
-                    # xenonpy: XenonPy descriptors of active phase and support,
-                    # xenonpy_active: only of the active phase (without the support block)
+                elif feature_set == "xenonpy":
+                    # XenonPy descriptors of the active phase and of the support
                     feature_cols = PROCESS_CONDITIONS + ["support_surface_area"]
                     _df = df[feature_cols + ["C2y", "Name"]]
-                    _df = get_xenonpy_descriptors(
-                        _df, include_support=(feature_set == "xenonpy")
-                    )
+                    _df = get_xenonpy_descriptors(_df)
                     feature_cols = [
                         col for col in _df.columns if col not in ["C2y", "Name"]
                     ]
@@ -589,11 +503,7 @@ def main(
 
                 for k, augm in enumerate(augmentations):
                     # check if augmentation is applicable
-                    if (
-                        feature_set
-                        in ["invariant", "xenonpy", "xenonpy_active", "composition_descriptors"]
-                        and augm
-                    ):
+                    if feature_set in ["invariant", "xenonpy"] and augm:
                         print(
                             f"WARNING: Data augmentation is not applicable for feature set `{feature_set}`. Ignoring augmentation."
                         )
@@ -802,14 +712,14 @@ if __name__ == "__main__":
         "--conditions",
         type=str,
         default="None",
-        help="Conditions to include in the model. Choose from 'None', 'temp_single', 'temp_pairs', 'ch4_o2_ratio'.",
+        help="Conditions to include in the model. Choose from 'None', 'temp_single', 'ch4_o2_ratio'.",
     )
     parser.add_argument(
         "--feature_sets",
         type=str,
         nargs="+",
-        default=["base+atom_numbers+support", "base+descriptors", "all"],
-        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'all', 'one_hot', 'invariant', 'composition_descriptors', 'xenonpy', 'xenonpy_active'; base+descriptors can be extended with additional descriptors appended with '+', e.g. 'base+descriptors+mulliken+band_center', choose from 'second_ionization', 'mulliken', 'band_center', 'optical_basicity', 'support_types', 'xenonpy_support', 'support_onehot') (default: ['base+atom_numbers+support', 'base+descriptors', 'all']) ",
+        default=["base+descriptors"],
+        help="Feature sets to run (choose from 'base+atom_numbers+support', 'base+descriptors', 'one_hot', 'invariant', 'xenonpy') (default: base+descriptors)",
     )
     parser.add_argument(
         "--augmentations",
@@ -880,8 +790,6 @@ if __name__ == "__main__":
         conditions = {"": {}}  # no conditions
     elif args.conditions == "temp_single":
         conditions = CONDITIONS_TEMP_SINGLE
-    elif args.conditions == "temp_pairs":
-        conditions = CONDITIONS_TEMP_PAIRS
     elif args.conditions == "ch4_o2_ratio":
         conditions = CONDITIONS_CH4_O2_RATIO
     else:

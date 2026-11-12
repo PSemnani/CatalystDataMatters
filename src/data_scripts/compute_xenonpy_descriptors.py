@@ -5,7 +5,8 @@ with one row per catalyst (column "Name" and the descriptor columns).
 
 - Active phase (columns xp_active_*): metal composition weighted by M1_mol%, M2_mol%,
   M3_mol%. The compositions are taken from the rows at 900 C, since the original data
-  contains inconsistent mol% for some catalysts at other temperatures. Catalysts without
+  (as of Oct. 1, 2026) contains inconsistent mol% for some catalysts at other
+  temperatures (this might be fixed in future updates of the data set). Catalysts without
   data at 900 C use their other rows, which must then have a consistent composition.
 - Support (columns xp_support_*): stoichiometric composition of the support.
 For both, XenonPy computes the weighted average, weighted variance, maximum, and minimum
