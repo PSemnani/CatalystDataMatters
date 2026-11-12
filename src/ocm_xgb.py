@@ -397,7 +397,14 @@ def main(
         # setup composite figure for all seeds
         num_seeds = len(seeds)
         print(f"Running experiments with {num_seeds} seeds...")
-        n_cols = len(feature_sets) * len(augmentations)
+        # one column per trained setting (augmentation is skipped for invariant and xenonpy)
+        plot_settings = [
+            (feature_set, augm)
+            for feature_set in feature_sets
+            for augm in augmentations
+            if not (feature_set in ["invariant", "xenonpy"] and augm)
+        ]
+        n_cols = len(plot_settings)
         figsize = (3.0 * n_cols, 3.0 * num_seeds)
         fig, axes = plt.subplots(
             nrows=num_seeds,
@@ -423,8 +430,7 @@ def main(
         }
         col_titles = [
             feature_set_labels.get(feature_set, feature_set) + ("+Aug" if augm else "")
-            for feature_set in feature_sets
-            for augm in augmentations
+            for feature_set, augm in plot_settings
         ]
         for ax, title in zip(axes[0], col_titles):
             ax.set_title(title)
@@ -536,7 +542,7 @@ def main(
                     print(f"Training completed in {elapsed_time:.2f} seconds.")
                     # compute metrics
                     r2, mae, mse, absolute_errors = plot_test_results(
-                        ax=axes[i, j * len(augmentations) + k],
+                        ax=axes[i, plot_settings.index((feature_set, augm))],
                         y_true=xgb_results["y_test"],
                         y_pred=xgb_results["preds_test"],
                     )
@@ -646,6 +652,7 @@ def main(
 
         # save figure
         if store_plots:
+            fig.tight_layout()
             fig.savefig(
                 results_path
                 / f"xgb_test_results_{seeds[0]}-{seeds[-1]}_{cond_name}.png"
