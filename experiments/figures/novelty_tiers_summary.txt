@@ -29,7 +29,7 @@ Per-catalyst MAE (mean over its folds), averaged over catalysts:
   loaded, other supports     n=11  MAE=2.21
 
 Component frequencies (number of catalysts):
-  metals: W 38, Na 33, Mn 26, Mo 7, Li 2, K 2, Fe 2, Zn 2, Y 1, Tb 1, Eu 1, Nd 1, Ce 1, La 1, Pd 1, Zr 1, V 1, Cu 1, Ni 1, Co 1, Ti 1, Ba 1, Sr 1, Ca 1, Mg 1, Hf 1
+  metals: W 38, Na 33, Mn 26, Mo 7, K 2, Li 2, Zn 2, Fe 2, Mg 1, Ca 1, Ba 1, Sr 1, Ti 1, V 1, Co 1, Ni 1, Cu 1, Y 1, Zr 1, Pd 1, La 1, Ce 1, Nd 1, Eu 1, Tb 1, Hf 1
   metals in exactly one catalyst: 18
   supports, all catalysts: {'SiO2': 36, 'BN': 2, 'MgO': 2, 'Al2O3': 2, 'SiC': 2, 'SiCnf': 2, 'BEA': 2, 'ZSM-5': 2, 'TiO2': 2, 'ZrO2': 2, 'Nb2O5': 2, 'CeO2': 2, 'n.a.': 1}
   supports, loaded catalysts: {'SiO2': 35, 'BN': 1, 'MgO': 1, 'Al2O3': 1, 'SiC': 1, 'SiCnf': 1, 'BEA': 1, 'ZSM-5': 1, 'TiO2': 1, 'ZrO2': 1, 'Nb2O5': 1, 'CeO2': 1}
