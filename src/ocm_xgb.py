@@ -413,14 +413,18 @@ def main(
             axes = axes.reshape(1, -1)
         if n_cols == 1:
             axes = axes.reshape(-1, 1)
-        # add column titles and axis labels
+        # add column titles (one column per feature set and augmentation) and axis labels
+        feature_set_labels = {
+            "base+atom_numbers+support": "Atom Numbers",
+            "base+descriptors": "Descriptors",
+            "one_hot": "One-Hot",
+            "invariant": "Invariant",
+            "xenonpy": "Xenonpy",
+        }
         col_titles = [
-            "Atom Numbers+Aug",
-            "Atom Numbers",
-            "Descriptors+Aug",
-            "Descriptors",
-            "All+Aug",
-            "All",
+            feature_set_labels.get(feature_set, feature_set) + ("+Aug" if augm else "")
+            for feature_set in feature_sets
+            for augm in augmentations
         ]
         for ax, title in zip(axes[0], col_titles):
             ax.set_title(title)
