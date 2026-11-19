@@ -10,7 +10,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-BASE_PROCESS = [
+PROCESS_CONDITIONS = [
     "Temp",
     "CT",
     "CH4/O2",
@@ -18,10 +18,14 @@ BASE_PROCESS = [
     "O2_flow",
     "CH4_flow",
     "Total_flow",
+]
+ELEMENT_RATIOS = [
     "M1_mol%",
     "M2_mol%",
     "M3_mol%",
 ]
+# process conditions and element ratios of the catalyst composition
+BASE_PROCESS = PROCESS_CONDITIONS + ELEMENT_RATIOS
 ATOM_NUMBERS = ["M1_atom_number", "M2_atom_number", "M3_atom_number"]
 SUPPORT = ["Support_ID"]
 DESCRIPTORS = [
@@ -42,7 +46,6 @@ DESCRIPTORS = [
     "M3_oxidation_state",
     "support_surface_area",
 ]
-
 CONDITIONS_TEMP_SINGLE = {
     "700": {"Temp": {"==": 700}},
     "750": {"Temp": {"==": 750}},
@@ -50,11 +53,6 @@ CONDITIONS_TEMP_SINGLE = {
     "800": {"Temp": {"==": 800}},
     "850": {"Temp": {"==": 850}},
     "900": {"Temp": {"==": 900}},
-}
-CONDITIONS_TEMP_PAIRS = {
-    "700&750": {"Temp": {">=": 700, "<=": 750}},
-    "775&800": {"Temp": {">=": 775, "<=": 800}},
-    "850&900": {"Temp": {">=": 850, "<=": 900}},
 }
 CONDITIONS_CH4_O2_RATIO = {
     "2": {"CH4/O2": {"==": 2}},
@@ -118,17 +116,10 @@ settings_to_filename_map = {
     ("base+descriptors", True): "ba",
     ("base+atom_numbers+support", False): "n",
     ("base+atom_numbers+support", True): "na",
-    ("all", False): "a",
-    ("all", True): "aa",
     ("one_hot", False): "oh",
     ("one_hot", True): "oha",
     ("invariant", False): "inv",
-    ("unique", True): "aa+u",
-    ("non_unique", True): "aa+nu",
-    ("threshold", True): "aa+thresh",
-    ("top_6", True): "aa+top6",
-    ("weighted_mean", True): "aa+wmean",
-    ("mean", True): "aa+mean",
+    ("xenonpy", False): "xp",
 }
 
 
@@ -246,6 +237,10 @@ def release_lock(lock_path: Path):
 
 def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
     """Get one-hot encoding for specified columns in a DataFrame.
+        The metal site columns (M1, M2, M3 in ATOM_NUMBERS) are encoded with the same
+        categories (all elements occurring in any site), such that every element has a
+        column for every site (e.g. M1_atom_number_25, M2_atom_number_25,
+        M3_atom_number_25) and the sites can be permuted for data augmentation.
 
     Args:
         df (pd.DataFrame): The input DataFrame.
@@ -255,16 +250,21 @@ def get_one_hot_encoding(df, column_names=ATOM_NUMBERS + SUPPORT):
         pd.DataFrame: A new DataFrame with one-hot encoded columns that also contains
             all columns not in column_names in the same format as before.
     """
+    df = df.copy()
+    site_cols = [col for col in column_names if col in ATOM_NUMBERS]
+    all_elements = sorted(set().union(*(df[col].unique() for col in site_cols)))
+    for col in site_cols:
+        df[col] = pd.Categorical(df[col], categories=all_elements)
     return pd.get_dummies(df, columns=column_names, drop_first=False)
 
 
 def get_invariant_embedding(df):
     """Get invariant embedding for the elements and support columns in a DataFrame.
         The invariant embedding is obtained by having one feature per element and support.
-        The support is one-hot encoded, whereas the elements are indicated with their 
+        The support is one-hot encoded, whereas the elements are indicated with their
         corresponding concentration.
         For example, if the input DataFrame has elements 1,...,5 and supports A, B, C,
-        and a data point has support B and elements M1=3, M2=5, and M3=1 with 
+        and a data point has support B and elements M1=3, M2=5, and M3=1 with
         concentrations 0.2, 0.5, and 0.3, respectively, the invariant embedding for this
         data point will be [0.3, 0, 0.2, 0, 0.5, 0, 1, 0].
 
@@ -276,8 +276,10 @@ def get_invariant_embedding(df):
         pd.DataFrame: A new DataFrame with invariant embeddings for elements and support.
     """
     # Get unique elements and supports
-    unique_elements = sorted(set(df[ATOM_NUMBERS[0]].unique()).union(
-        df[ATOM_NUMBERS[1]].unique()).union(df[ATOM_NUMBERS[2]].unique())
+    unique_elements = sorted(
+        set(df[ATOM_NUMBERS[0]].unique())
+        .union(df[ATOM_NUMBERS[1]].unique())
+        .union(df[ATOM_NUMBERS[2]].unique())
     )
     unique_supports = sorted(df[SUPPORT[0]].unique())
     element_cols = [f"element_{str(e)}" for e in unique_elements]
@@ -294,7 +296,9 @@ def get_invariant_embedding(df):
     for i, atom_col in enumerate(ATOM_NUMBERS):
         for element, name in zip(unique_elements, element_cols):
             mask = df[atom_col] == element
-            invariant_df.loc[mask, name] = df.loc[mask, f"M{i+1}_mol%"]/100  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
+            invariant_df.loc[mask, name] = (
+                df.loc[mask, f"M{i+1}_mol%"] / 100
+            )  # Assuming M1_mol%, M2_mol%, M3_mol% are in percentage
 
     # Fill in the one-hot encoded supports
     for support, name in zip(unique_supports, support_cols):
@@ -303,11 +307,47 @@ def get_invariant_embedding(df):
     # Cast one-hot support columns to integer dtype (keeps element columns as float)
     invariant_df[support_cols] = invariant_df[support_cols].astype("int64")
 
-    # Prepend all columns not in ATOM_NUMBERS + SUPPORT and ["M1_mol%", "M2_mol%", "M3_mol%"] to the invariant_df
-    other_cols = [col for col in df.columns if col not in ATOM_NUMBERS + SUPPORT + ["M1_mol%", "M2_mol%", "M3_mol%"]]
+    # Prepend all columns not in ATOM_NUMBERS + SUPPORT + ELEMENT_RATIOS to the invariant_df
+    other_cols = [
+        col
+        for col in df.columns
+        if col not in ATOM_NUMBERS + SUPPORT + ELEMENT_RATIOS
+    ]
     invariant_df = pd.concat([df[other_cols], invariant_df], axis=1)
 
     return invariant_df
+
+
+# table with the XenonPy descriptors of every catalyst (see src/data_scripts/compute_xenonpy_descriptors.py)
+XENONPY_DESCRIPTORS_PATH = Path(__file__).resolve().parent.parent / "Dataset" / "xenonpy_descriptors.csv"
+
+
+def get_xenonpy_descriptors(df, path=XENONPY_DESCRIPTORS_PATH, catalyst_name_column="Name"):
+    """Get the XenonPy compositional descriptors of the active phase (columns xp_active_*)
+        and of the support (columns xp_support_*) for every row of a DataFrame.
+        The descriptors are loaded from a table with one row per catalyst, which is computed
+        with src/data_scripts/compute_xenonpy_descriptors.py (requires a separate environment),
+        and matched to the rows by the catalyst name.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        path (str or Path): Path to the table with the XenonPy descriptors
+            (default: Dataset/xenonpy_descriptors.csv in the repository).
+        catalyst_name_column (str): The name of the column containing catalyst names in df
+            and in the table (default: "Name").
+
+    Returns:
+        pd.DataFrame: A new DataFrame with all columns of df followed by the XenonPy descriptors
+            (same index and row order as df).
+    """
+    descriptors = pd.read_csv(path, float_precision="round_trip").set_index(catalyst_name_column)
+    descriptors = descriptors[[col for col in descriptors.columns if col.startswith(("xp_active_", "xp_support_"))]]
+    missing = set(df[catalyst_name_column]) - set(descriptors.index)
+    if missing:
+        raise ValueError(f"No XenonPy descriptors found in {path} for catalysts: {sorted(missing)}")
+    xenonpy_df = descriptors.loc[df[catalyst_name_column]].set_index(df.index)
+    return pd.concat([df, xenonpy_df], axis=1)
+
 
 def get_cross_validation_masks(
     df,
@@ -484,14 +524,16 @@ def split_data(
                 train_pool = all_catalysts
             if test_pool is None:
                 test_pool = all_catalysts
-            assert len(test_pool) >= n_test_catalysts, \
-                f"Not enough catalysts in test_pool ({len(test_pool)}) for the " \
+            assert len(test_pool) >= n_test_catalysts, (
+                f"Not enough catalysts in test_pool ({len(test_pool)}) for the "
                 f"requested split size ({n_test_catalysts})."
+            )
             test_catalysts = rng.sample(list(test_pool), n_test_catalysts)
             remaining_catalysts = [c for c in train_pool if c not in test_catalysts]
-            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, \
-                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "\
+            assert len(remaining_catalysts) >= n_train_catalysts + n_val_catalysts, (
+                f"Not enough catalysts in train_pool ({len(remaining_catalysts)}) for "
                 f"the requested split size ({n_train_catalysts + n_val_catalysts})."
+            )
             train_catalysts = rng.sample(
                 remaining_catalysts, n_train_catalysts + n_val_catalysts  # val included
             )
@@ -653,7 +695,7 @@ def find_site_permutation_groups(feature_cols, site_prefixes=("M1_", "M2_", "M3_
     for col in feature_cols:
         if not col.startswith(site_prefixes[0]):
             continue
-        suffix = col[len(site_prefixes[0]):]
+        suffix = col[len(site_prefixes[0]) :]
         if suffix in seen_suffixes:
             continue
         seen_suffixes.add(suffix)
@@ -744,12 +786,15 @@ def augment_data(
         if len(relevant_cols) > 0:
             relevant = variants[:, :, relevant_cols]  # (n, n_perms, n_relevant)
             # mark, for each row, permutations that reproduce an earlier one
+            # (missing values count as equal, since NaN != NaN)
+            missing = pd.isna(relevant)
             duplicate = np.zeros((n, n_perms), dtype=bool)
             for a in range(n_perms):
                 for b in range(a + 1, n_perms):
-                    duplicate[:, b] |= np.all(
-                        relevant[:, a, :] == relevant[:, b, :], axis=1
+                    equal = (relevant[:, a, :] == relevant[:, b, :]) | (
+                        missing[:, a, :] & missing[:, b, :]
                     )
+                    duplicate[:, b] |= np.all(equal, axis=1)
             keep_mask = ~duplicate
         else:
             # nothing to permute: only the (unmodified) identity variant is kept
